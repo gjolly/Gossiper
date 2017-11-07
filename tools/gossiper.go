@@ -21,6 +21,7 @@ type Gossiper struct {
 	idMessage        int
 	messagesReceived map[string](map[int]RumorMessage)
 	exchangeEnded    chan bool
+	routingTable     RoutingTable
 }
 
 // NewGossiper -- Return a new gossiper structure
@@ -55,6 +56,7 @@ func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string) (*Go
 		idMessage:        1,
 		messagesReceived: make(map[string](map[int]RumorMessage), 0),
 		exchangeEnded:    make(chan bool),
+		routingTable:     *newRoutingTable(),
 	}
 
 	for _, peerAddr := range peerAddrs {
@@ -166,6 +168,7 @@ func (g *Gossiper) acceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 		g.idMessage++
 	}
 
+	g.routingTable.add(mess.Origin, addr.String())
 	g.updateVectorClock(mess.Origin, mess.PeerMessage.ID)
 	g.storeRumorMessage(mess, mess.PeerMessage.ID, mess.Origin)
 

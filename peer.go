@@ -12,7 +12,7 @@ func main() {
 
 	// Parsing inputs
 	UIPort := flag.String("UIPort", "10000", "UIPort")
-	gossipPort := flag.String("gossipPort", "5000", "gossipPort")
+	gossipPort := flag.String("gossipPort", "localhost:5000", "gossipPort")
 	nodeName := flag.String("name", "nodeA", "nodeName")
 	peers := flag.String("peers", "", "peers")
 	flag.Parse()
