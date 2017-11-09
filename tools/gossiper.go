@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dedis/protobuf"
+	"sync"
 )
 
 // Gossiper -- Discripe a node of a Gossip network
@@ -18,10 +19,11 @@ type Gossiper struct {
 	name             string
 	peers            map[string]Peer
 	vectorClock      []PeerStatus
-	idMessage        int
-	messagesReceived map[string](map[int]RumorMessage)
+	idMessage        uint32
+	messagesReceived map[string](map[uint32]RumorMessage)
 	exchangeEnded    chan bool
 	routingTable     RoutingTable
+	mutex            *sync.Mutex
 }
 
 // NewGossiper -- Return a new gossiper structure
@@ -54,9 +56,10 @@ func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string) (*Go
 		peers:            make(map[string]Peer, 0),
 		vectorClock:      make([]PeerStatus, 0),
 		idMessage:        1,
-		messagesReceived: make(map[string](map[int]RumorMessage), 0),
+		messagesReceived: make(map[string](map[uint32]RumorMessage), 0),
 		exchangeEnded:    make(chan bool),
 		routingTable:     *newRoutingTable(),
+		mutex:            &sync.Mutex{},
 	}
 
 	for _, peerAddr := range peerAddrs {
@@ -99,7 +102,9 @@ func (g *Gossiper) AddPeer(address net.UDPAddr) {
 	IPAddress := address.String()
 	_, okAddr := g.peers[IPAddress]
 	if !okAddr {
+		g.mutex.Lock()
 		g.peers[IPAddress] = newPeer(address)
+		g.mutex.Unlock()
 	}
 }
 
@@ -137,9 +142,11 @@ func (g *Gossiper) listenConn(conn *net.UDPConn, isFromClient bool) {
 
 // Run -- Launch the server
 func (g *Gossiper) Run() {
-	go g.antiEntropy()
 	go g.listenConn(g.UIConn, true)
-	g.listenConn(g.gossipConn, false)
+	go g.listenConn(g.gossipConn, false)
+	go g.antiEntropy()
+	g.sendRouteRumor()
+	g.routeRumorDeamon()
 }
 
 func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, nbByte int, isFromClient bool) {
@@ -160,15 +167,18 @@ func (g *Gossiper) acceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 		return
 	}
 
-	g.printDebugRumor(mess, mess.Origin, addr.String(), isFromClient)
-
 	if isFromClient {
 		mess.Origin = g.name
+		g.mutex.Lock()
 		mess.PeerMessage.ID = g.idMessage
 		g.idMessage++
+		g.mutex.Unlock()
 	}
 
+	g.mutex.Lock()
 	g.routingTable.add(mess.Origin, addr.String())
+	g.mutex.Unlock()
+
 	g.updateVectorClock(mess.Origin, mess.PeerMessage.ID)
 	g.storeRumorMessage(mess, mess.PeerMessage.ID, mess.Origin)
 
@@ -176,6 +186,10 @@ func (g *Gossiper) acceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 		g.sendStatusMessage(addr)
 		g.AddPeer(addr)
 	}
+
+	//if mess.PeerMessage.Text != "" {
+	g.printDebugRumor(mess, mess.Origin, addr.String(), isFromClient)
+	//}
 
 	g.propagateRumorMessage(mess, addr.String())
 }
@@ -198,10 +212,10 @@ func (g Gossiper) propagateRumorMessage(mess RumorMessage, excludedAddrs string)
 	}
 }
 
-func (g Gossiper) acceptStatusMessage(mess StatusMessage, addr *net.UDPAddr) {
-	messToSend, isMessageToAsk := g.compareVectorClocks(mess.Want)
+func (g *Gossiper) acceptStatusMessage(mess StatusMessage, addr *net.UDPAddr) {
+	g.AddPeer(*addr)
 	g.printDebugStatus(mess, *addr)
-
+	messToSend, isMessageToAsk := g.compareVectorClocks(mess.Want)
 	if messToSend != nil {
 		fmt.Println("MONGERING with", addr.String())
 		g.sendMessage(*messToSend, *addr)
@@ -213,8 +227,6 @@ func (g Gossiper) acceptStatusMessage(mess StatusMessage, addr *net.UDPAddr) {
 		fmt.Println("IN SYNC WITH", addr.String())
 		g.exchangeEnded <- true
 	}
-
-	g.AddPeer(*addr)
 }
 
 func (g Gossiper) printPeerList() {
@@ -248,47 +260,53 @@ func (g Gossiper) printDebugRumor(mess RumorMessage, emitterName, lastHopIP stri
 	g.printPeerList()
 }
 
-func (g Gossiper) alreadySeen(id int, nodeName string) bool {
+func (g Gossiper) alreadySeen(id uint32, nodeName string) bool {
 	_, ok := g.messagesReceived[nodeName][id]
 	return ok
 }
 
-func (g *Gossiper) updateVectorClock(name string, id int) {
+func (g *Gossiper) updateVectorClock(name string, id uint32) {
 	find := false
 	for i := range g.vectorClock {
 		if g.vectorClock[i].Identifier == name {
 			find = true
 			if g.vectorClock[i].NextID == id {
+				g.mutex.Lock()
 				g.vectorClock[i].NextID++
 				g.checkOnAlreadySeen(g.vectorClock[i].NextID, name)
+				g.mutex.Unlock()
 			}
 		}
 	}
 	if !find && id == 1 {
+		g.mutex.Lock()
 		g.vectorClock = append(g.vectorClock, PeerStatus{Identifier: name, NextID: 2})
 		g.checkOnAlreadySeen(2, name)
+		g.mutex.Unlock()
 	}
 }
 
-func (g Gossiper) checkOnAlreadySeen(nextID int, nodeName string) {
+func (g Gossiper) checkOnAlreadySeen(nextID uint32, nodeName string) {
 	if g.alreadySeen(nextID, nodeName) {
 		g.updateVectorClock(nodeName, nextID)
 	}
 }
 
-func (g Gossiper) storeRumorMessage(mess RumorMessage, id int, nodeName string) {
+func (g Gossiper) storeRumorMessage(mess RumorMessage, id uint32, nodeName string) {
+	g.mutex.Lock()
 	if g.messagesReceived[nodeName] == nil {
-		g.messagesReceived[nodeName] = make(map[int]RumorMessage)
+		g.messagesReceived[nodeName] = make(map[uint32]RumorMessage)
 	}
 	g.messagesReceived[nodeName][id] = mess
+	g.mutex.Unlock()
 }
 
-func (g *Gossiper) sendStatusMessage(addr net.UDPAddr) {
+func (g Gossiper) sendStatusMessage(addr net.UDPAddr) {
 	g.sendMessage(GossipMessage{Status: &StatusMessage{Want: g.vectorClock}}, addr)
 }
 
 func (g *Gossiper) antiEntropy() {
-	tick := time.NewTicker(time.Second)
+	tick := time.NewTicker(time.Minute)
 	for {
 		<-tick.C
 		peer := g.getRandomPeer("")
@@ -301,18 +319,18 @@ func (g *Gossiper) antiEntropy() {
 func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (msgToSend *GossipMessage, isMessageToAsk bool) {
 	isMessageToAsk = false
 	msgToSend = nil
-	var find bool
+	find := true
 	for _, ps := range g.vectorClock {
 		find = false
 		for _, wanted := range vectorClock {
 			if ps.Identifier == wanted.Identifier {
 				find = true
-				if ps.NextID < wanted.NextID && wanted.NextID > 0 {
+				if ps.NextID < wanted.NextID {
 					isMessageToAsk = true
 					if msgToSend != nil {
 						return
 					}
-				} else if ps.NextID > wanted.NextID && wanted.NextID > 0 {
+				} else if ps.NextID > wanted.NextID {
 					mess := g.messagesReceived[ps.Identifier][ps.NextID]
 					msgToSend = &GossipMessage{Rumor: &mess}
 					if isMessageToAsk {
@@ -322,7 +340,7 @@ func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (msgToSend *Goss
 			}
 		}
 		if !find {
-			rm := g.messagesReceived[ps.Identifier][0]
+			rm := g.messagesReceived[ps.Identifier][1]
 			msgToSend = &GossipMessage{Rumor: &rm}
 			if isMessageToAsk {
 				return
@@ -336,10 +354,31 @@ func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (msgToSend *Goss
 				find = true
 			}
 		}
-	}
-	if !find {
-		isMessageToAsk = true
-		return
+		if !find {
+			isMessageToAsk = true
+			return
+		}
 	}
 	return
+}
+
+func genRouteRumor() (RumorMessage) {
+	mess := RumorMessage{
+		PeerMessage: PeerMessage{
+			Text: "",
+		},
+	}
+	return mess
+}
+
+func (g Gossiper) routeRumorDeamon() {
+	tick := time.NewTicker(time.Minute)
+	for {
+		<-tick.C
+		g.sendRouteRumor()
+	}
+}
+
+func (g *Gossiper) sendRouteRumor() {
+	g.acceptRumorMessage(genRouteRumor(), *g.gossipAddr, true)
 }

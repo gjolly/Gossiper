@@ -9,5 +9,5 @@ func newRoutingTable() *RoutingTable{
 }
 
 func (r *RoutingTable) add(key string, value string){
-	r.add(key, value)
+	r.table[key] = value
 }

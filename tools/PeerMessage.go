@@ -1,6 +1,6 @@
 package tools
 
 type PeerMessage struct {
-	ID   int
+	ID   uint32
 	Text string
 }
