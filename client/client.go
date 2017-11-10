@@ -25,8 +25,7 @@ func main() {
 		return
 	}
 
-	pmess := tools.PeerMessage{Text: *msg}
-	rmess := tools.NewRumorMessage(pmess)
+	rmess := tools.RumorMessage{Text: *msg}
 	mess := tools.GossipMessage{Rumor: &rmess}
 	buf, err := protobuf.Encode(&mess)
 

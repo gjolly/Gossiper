@@ -1,17 +1,19 @@
 package tools
 
-type RumorMessage struct {
-	Origin      string
-	PeerMessage PeerMessage
-}
+import "fmt"
 
-//NewRumorMessage -- Return an initialized RumorMessage
-func NewRumorMessage(peerMessage PeerMessage) RumorMessage {
-	return RumorMessage{
-		PeerMessage: peerMessage,
-	}
+type RumorMessage struct {
+	Origin   string
+	ID       uint32
+	Text     string
+	Dest     string
+	HopLimit uint32
 }
 
 func (m RumorMessage) String() string {
-	return m.PeerMessage.Text
+	return "(" + m.Origin + ", " + fmt.Sprint(m.ID) + ", " + m.Text + ")"
+}
+
+func (m RumorMessage) IsPrivate() bool {
+	return m.Dest != ""
 }

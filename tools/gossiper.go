@@ -163,35 +163,58 @@ func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, nbByte int, isFromCl
 //Callback function, call when a message is received
 func (g *Gossiper) acceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFromClient bool) {
 
-	if !isFromClient && g.alreadySeen(mess.PeerMessage.ID, mess.Origin) {
+	if !isFromClient && g.alreadySeen(mess.ID, mess.Origin) {
 		return
 	}
 
 	if isFromClient {
 		mess.Origin = g.name
 		g.mutex.Lock()
-		mess.PeerMessage.ID = g.idMessage
+		mess.ID = g.idMessage
 		g.idMessage++
 		g.mutex.Unlock()
 	}
+
+	//if mess.PeerMessage.Text != "" {
+	g.printDebugRumor(mess, addr.String(), isFromClient)
+	//}
 
 	g.mutex.Lock()
 	g.routingTable.add(mess.Origin, addr.String())
 	g.mutex.Unlock()
 
-	g.updateVectorClock(mess.Origin, mess.PeerMessage.ID)
-	g.storeRumorMessage(mess, mess.PeerMessage.ID, mess.Origin)
+	if !mess.IsPrivate() {
+		g.updateVectorClock(mess.Origin, mess.ID)
+		g.storeRumorMessage(mess, mess.ID, mess.Origin)
 
-	if !isFromClient {
-		g.sendStatusMessage(addr)
-		g.AddPeer(addr)
+		if !isFromClient {
+			g.sendStatusMessage(addr)
+			g.AddPeer(addr)
+		}
+		g.propagateRumorMessage(mess, addr.String())
+	} else {
+		if mess.HopLimit > 1 {
+			g.forward(mess)
+		} else if mess.Dest == g.name {
+			g.receivePrivateMessage(mess)
+		}
+	}
+}
+
+func (g Gossiper) receivePrivateMessage(message RumorMessage) {
+	fmt.Println("PRIVATE Origin", message.Origin, "content", message.Text)
+}
+
+func (g Gossiper) forward(message RumorMessage) {
+	message.HopLimit -= 1
+	addr := g.routingTable.FindNextHop(message.Dest)
+	if addr != "" {
+		UDPAddr, err := net.ResolveUDPAddr("udp4", addr)
+		if err == nil {
+			g.sendMessage(GossipMessage{Rumor: &message}, *UDPAddr)
+		}
 	}
 
-	//if mess.PeerMessage.Text != "" {
-	g.printDebugRumor(mess, mess.Origin, addr.String(), isFromClient)
-	//}
-
-	g.propagateRumorMessage(mess, addr.String())
 }
 
 func (g Gossiper) propagateRumorMessage(mess RumorMessage, excludedAddrs string) {
@@ -215,15 +238,18 @@ func (g Gossiper) propagateRumorMessage(mess RumorMessage, excludedAddrs string)
 func (g *Gossiper) acceptStatusMessage(mess StatusMessage, addr *net.UDPAddr) {
 	g.AddPeer(*addr)
 	g.printDebugStatus(mess, *addr)
-	messToSend, isMessageToAsk := g.compareVectorClocks(mess.Want)
-	if messToSend != nil {
+
+	isMessageToAsk, node, id := g.compareVectorClocks(mess.Want)
+	rm := g.messagesReceived[node][id]
+	messToSend := GossipMessage{Rumor: &rm}
+	if node != "" {
 		fmt.Println("MONGERING with", addr.String())
-		g.sendMessage(*messToSend, *addr)
+		g.sendMessage(messToSend, *addr)
 	}
 	if isMessageToAsk {
 		g.sendStatusMessage(*addr)
 	}
-	if !isMessageToAsk && messToSend == nil {
+	if !isMessageToAsk && node == "" {
 		fmt.Println("IN SYNC WITH", addr.String())
 		g.exchangeEnded <- true
 	}
@@ -251,11 +277,11 @@ func (g Gossiper) printDebugStatus(mess StatusMessage, addr net.UDPAddr) {
 	g.printPeerList()
 }
 
-func (g Gossiper) printDebugRumor(mess RumorMessage, emitterName, lastHopIP string, isFromClient bool) {
+func (g Gossiper) printDebugRumor(mess RumorMessage, lastHopIP string, isFromClient bool) {
 	if isFromClient {
 		fmt.Println("CLIENT", mess, g.name)
 	} else {
-		fmt.Println("RUMOR", "origin", emitterName, "from", lastHopIP, "ID", mess.PeerMessage.ID, "contents", mess.PeerMessage.Text)
+		fmt.Println("RUMOR", "origin", mess.Origin, "from", lastHopIP, "ID", mess.ID, "contents", mess.Text)
 	}
 	g.printPeerList()
 }
@@ -316,10 +342,11 @@ func (g *Gossiper) antiEntropy() {
 	}
 }
 
-func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (msgToSend *GossipMessage, isMessageToAsk bool) {
+func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (isMessageToAsk bool, node string, id uint32) {
 	isMessageToAsk = false
-	msgToSend = nil
 	find := true
+	node = ""
+	id = 0
 	for _, ps := range g.vectorClock {
 		find = false
 		for _, wanted := range vectorClock {
@@ -327,12 +354,11 @@ func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (msgToSend *Goss
 				find = true
 				if ps.NextID < wanted.NextID {
 					isMessageToAsk = true
-					if msgToSend != nil {
+					if node != "" {
 						return
 					}
 				} else if ps.NextID > wanted.NextID {
-					mess := g.messagesReceived[ps.Identifier][ps.NextID]
-					msgToSend = &GossipMessage{Rumor: &mess}
+					node, id = ps.Identifier, wanted.NextID
 					if isMessageToAsk {
 						return
 					}
@@ -340,8 +366,7 @@ func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (msgToSend *Goss
 			}
 		}
 		if !find {
-			rm := g.messagesReceived[ps.Identifier][1]
-			msgToSend = &GossipMessage{Rumor: &rm}
+			node, id = ps.Identifier, 1
 			if isMessageToAsk {
 				return
 			}
@@ -364,9 +389,7 @@ func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (msgToSend *Goss
 
 func genRouteRumor() (RumorMessage) {
 	mess := RumorMessage{
-		PeerMessage: PeerMessage{
-			Text: "",
-		},
+		Text: "",
 	}
 	return mess
 }
