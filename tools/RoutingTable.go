@@ -15,3 +15,7 @@ func (r *RoutingTable) add(key string, value string) {
 func (r RoutingTable) FindNextHop(dest string) string {
 	return r.table[dest]
 }
+
+func (r RoutingTable) GetTable() map[string]string {
+	return r.table
+}

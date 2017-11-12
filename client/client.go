@@ -12,9 +12,10 @@ import (
 func main() {
 	port := flag.String("UIPort", "10000", "UIPort")
 	msg := flag.String("msg", "hello", "Message")
+	dest := flag.String("Dest", "", "Specify a destination for a private message")
 	flag.Parse()
 
-	udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:"+*port)
+	udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:" + *port)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -25,7 +26,7 @@ func main() {
 		return
 	}
 
-	rmess := tools.RumorMessage{Text: *msg}
+	rmess := tools.RumorMessage{Text: *msg, Dest: *dest}
 	mess := tools.GossipMessage{Rumor: &rmess}
 	buf, err := protobuf.Encode(&mess)
 

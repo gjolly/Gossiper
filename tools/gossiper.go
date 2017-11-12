@@ -22,9 +22,10 @@ type Gossiper struct {
 	idMessage        uint32
 	MessagesReceived map[string](map[uint32]RumorMessage)
 	exchangeEnded    chan bool
-	routingTable     RoutingTable
+	RoutingTable     RoutingTable
 	mutex            *sync.Mutex
 	rtimer           uint
+	PrivateMessages  []RumorMessage
 }
 
 // NewGossiper -- Return a new gossiper structure
@@ -59,7 +60,7 @@ func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string, rtim
 		idMessage:        1,
 		MessagesReceived: make(map[string](map[uint32]RumorMessage), 0),
 		exchangeEnded:    make(chan bool),
-		routingTable:     *newRoutingTable(),
+		RoutingTable:     *newRoutingTable(),
 		mutex:            &sync.Mutex{},
 		rtimer:           rtimer,
 	}
@@ -112,8 +113,6 @@ func (g *Gossiper) AddPeer(address net.UDPAddr) {
 
 func (g Gossiper) sendRumorMessage(message RumorMessage, addr net.UDPAddr) error {
 	gossipMessage := GossipMessage{Rumor: &message}
-	fmt.Println("ID Rmessge send :", message.ID)
-	fmt.Println("Message send :", gossipMessage)
 	messEncode, err := protobuf.Encode(&gossipMessage)
 	if err != nil {
 		fmt.Println("error protobuf")
@@ -185,10 +184,14 @@ func (g *Gossiper) AcceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 
 	if isFromClient {
 		mess.Origin = g.name
-		g.mutex.Lock()
-		mess.ID = g.idMessage
-		g.idMessage++
-		g.mutex.Unlock()
+		if !mess.IsPrivate() {
+			g.mutex.Lock()
+			mess.ID = g.idMessage
+			g.idMessage++
+			g.mutex.Unlock()
+		} else {
+			mess.HopLimit = 10
+		}
 	}
 
 	//if mess.PeerMessage.Text != "" {
@@ -197,7 +200,7 @@ func (g *Gossiper) AcceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 
 	g.mutex.Lock()
 	fmt.Println("DSDV", mess.Origin+":"+addr.String())
-	g.routingTable.add(mess.Origin, addr.String())
+	g.RoutingTable.add(mess.Origin, addr.String())
 	g.mutex.Unlock()
 
 	if !mess.IsPrivate() {
@@ -210,7 +213,7 @@ func (g *Gossiper) AcceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 		}
 		g.propagateRumorMessage(mess, addr.String())
 	} else {
-		if mess.HopLimit > 1 {
+		if mess.HopLimit > 1 && mess.Dest != g.name {
 			g.forward(mess)
 		} else if mess.Dest == g.name {
 			g.receivePrivateMessage(mess)
@@ -218,16 +221,18 @@ func (g *Gossiper) AcceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 	}
 }
 
-func (g Gossiper) receivePrivateMessage(message RumorMessage) {
-	fmt.Println("PRIVATE Origin", message.Origin, "content", message.Text)
+func (g *Gossiper) receivePrivateMessage(message RumorMessage) {
+	fmt.Println("PRIVATE:", message.Origin+":"+fmt.Sprint(message.HopLimit)+":"+message.Text)
+	g.PrivateMessages = append(g.PrivateMessages, message)
 }
 
 func (g Gossiper) forward(message RumorMessage) {
 	message.HopLimit -= 1
-	addr := g.routingTable.FindNextHop(message.Dest)
+	addr := g.RoutingTable.FindNextHop(message.Dest)
 	if addr != "" {
 		UDPAddr, err := net.ResolveUDPAddr("udp4", addr)
 		if err == nil {
+			fmt.Println("FORWARD private msg", message.Dest, addr)
 			g.sendRumorMessage(message, *UDPAddr)
 		}
 	}
@@ -255,13 +260,10 @@ func (g Gossiper) propagateRumorMessage(mess RumorMessage, excludedAddrs string)
 func (g *Gossiper) acceptStatusMessage(mess StatusMessage, addr *net.UDPAddr) {
 	g.AddPeer(*addr)
 	g.printDebugStatus(mess, *addr)
-
+	fmt.Println("VectorClock:", g.vectorClock)
 	isMessageToAsk, node, id := g.compareVectorClocks(mess.Want)
 	messToSend := g.MessagesReceived[node][id]
 	if node != "" {
-		fmt.Println(g.MessagesReceived)
-		fmt.Println(mess.Want)
-		fmt.Println("[acceptStatus] sending mess from", node, "ID", id)
 		fmt.Println("MONGERING with", addr.String())
 		g.sendRumorMessage(messToSend, *addr)
 	}
@@ -306,7 +308,9 @@ func (g Gossiper) printDebugRumor(mess RumorMessage, lastHopIP string, isFromCli
 }
 
 func (g Gossiper) alreadySeen(id uint32, nodeName string) bool {
+	g.mutex.Lock()
 	_, ok := g.MessagesReceived[nodeName][id]
+	g.mutex.Unlock()
 	return ok
 }
 
@@ -318,16 +322,16 @@ func (g *Gossiper) updateVectorClock(name string, id uint32) {
 			if g.vectorClock[i].NextID == id {
 				g.mutex.Lock()
 				g.vectorClock[i].NextID++
-				g.checkOnAlreadySeen(g.vectorClock[i].NextID, name)
 				g.mutex.Unlock()
+				g.checkOnAlreadySeen(g.vectorClock[i].NextID, name)
 			}
 		}
 	}
 	if !find && id == 1 {
 		g.mutex.Lock()
 		g.vectorClock = append(g.vectorClock, PeerStatus{Identifier: name, NextID: 2})
-		g.checkOnAlreadySeen(2, name)
 		g.mutex.Unlock()
+		g.checkOnAlreadySeen(2, name)
 	}
 }
 

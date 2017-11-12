@@ -22,7 +22,7 @@ func main() {
 	nodeName := flag.String("name", "nodeA", "nodeName")
 	peers := flag.String("peers", "", "peers")
 	rtimer := flag.Uint("rtimer", 60, "rtimer")
-	guiAddr := flag.String("guiAddr", "localhost:8080", "Address of the GUI")
+	guiAddr := flag.String("guiAddr", "none", "Address of the GUI")
 	flag.Parse()
 
 	// Avoid :0 of being a peers if no intial peers are specified
@@ -44,14 +44,21 @@ func main() {
 		return
 	}
 
-	// Creating WebServer
-	peer.webServer = GUI.NewWebServer(*guiAddr, peer.sendMsg, &peer.gossiper.MessagesReceived)
-	fmt.Println("Peer: server addr=", peer.webServer.Addr)
+	if *guiAddr != "none"{
+		// Creating WebServer
+		peer.webServer = GUI.NewWebServer(*guiAddr, peer.sendMsg, peer.sendPrivateMsg, &peer.gossiper.MessagesReceived,
+			&peer.gossiper.PrivateMessages, &peer.gossiper.RoutingTable)
+		fmt.Println("Peer: server addr=", peer.webServer.Addr)
+		go 	peer.webServer.Run()
+	}
 
-	go peer.gossiper.Run()
-	peer.webServer.Run()
+	peer.gossiper.Run()
 }
 
 func (p *Peer) sendMsg(msg string) {
 	p.gossiper.AcceptRumorMessage(tools.RumorMessage{Text:msg}, *p.webServer.Addr, true)
+}
+
+func (p *Peer) sendPrivateMsg(msg, dest string){
+	p.gossiper.AcceptRumorMessage(tools.RumorMessage{Dest:dest, Text:msg}, *p.webServer.Addr, true)
 }
