@@ -1,7 +1,5 @@
 package tools
 
-import "fmt"
-
 type RumorMessage struct {
 	Origin   string
 	ID       uint32
@@ -11,7 +9,7 @@ type RumorMessage struct {
 }
 
 func (m RumorMessage) String() string {
-	return "(" + m.Origin + ", " + fmt.Sprint(m.ID) + ", " + m.Text + ")"
+	return m.Text
 }
 
 func (m RumorMessage) IsPrivate() bool {

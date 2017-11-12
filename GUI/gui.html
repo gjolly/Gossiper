@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Client</title>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+    <script>
+        $(document).ready(function () {
+            getMessages();
+            console.log("ready");
+            $("#sendMsg").click(function () {
+                        var msg = document.getElementById('msg').value;
+                        console.log(msg);
+                        $.ajax({
+                            type: "POST",
+                            url: "/sendMsg",
+                            data: {mess: msg}
+                        });
+                    }
+            )
+        });
+
+        function getMessages() {
+            $.ajax({
+                type: "GET",
+                url: "/messReceived",
+                success: function (data) {
+                    console.log(data)
+                    window.setTimeout(function () {
+                        getMessages();
+                    }, 1000);
+                }
+            });
+        }
+    </script>
+</head>
+<body>
+<table id="chatbox">
+</table>
+
+<input type="text" id="msg"/>
+<button id="sendMsg">Send</button>
+</body>
+
+</html>

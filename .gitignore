@@ -16,3 +16,11 @@
 .idea/
 build/
 test/
+
+# Binaries
+gossiper
+Gossiper
+tests/.test_hw2_ex1.sh.swp
+tests/test_hw2_ex1.sh
+tests/tests_hw2.zip
+tests/tests_hw2/

@@ -3,11 +3,11 @@ cd ../build
 go build ../
 go build ../client
 
-./Gossiper -UIPort=5004 -gossipPort=localhost:10004 -name=nodeE > $init_path/E.log &
-./Gossiper -UIPort=5003 -gossipPort=localhost:10003 -name=nodeD -peers=localhost:10004> $init_path/D.log &
-./Gossiper -UIPort=5002 -gossipPort=localhost:10002 -name=nodeC -peers=localhost:10003> $init_path/C.log &
-./Gossiper -UIPort=5001 -gossipPort=localhost:10001 -name=nodeB -peers=localhost:10002> $init_path/B.log &
-./Gossiper -UIPort=5000 -gossipPort=localhost:10000 -name=nodeA -peers=localhost:10001 > $init_path/A.log &
+./Gossiper -UIPort=5004 -gossipAddr=localhost:10004 -name=nodeE > $init_path/E.log &
+./Gossiper -UIPort=5003 -gossipAddr=localhost:10003 -name=nodeD -peers=localhost:10004> $init_path/D.log &
+./Gossiper -UIPort=5002 -gossipAddr=localhost:10002 -name=nodeC -peers=localhost:10003> $init_path/C.log &
+./Gossiper -UIPort=5001 -gossipAddr=localhost:10001 -name=nodeB -peers=localhost:10002> $init_path/B.log &
+./Gossiper -UIPort=5000 -gossipAddr=localhost:10000 -name=nodeA -peers=localhost:10001 > $init_path/A.log &
 
 GREEN='\033[0;32m'
 msg1='A->E'

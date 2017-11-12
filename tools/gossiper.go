@@ -20,14 +20,15 @@ type Gossiper struct {
 	peers            map[string]Peer
 	vectorClock      []PeerStatus
 	idMessage        uint32
-	messagesReceived map[string](map[uint32]RumorMessage)
+	MessagesReceived map[string](map[uint32]RumorMessage)
 	exchangeEnded    chan bool
 	routingTable     RoutingTable
 	mutex            *sync.Mutex
+	rtimer           uint
 }
 
 // NewGossiper -- Return a new gossiper structure
-func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string) (*Gossiper, error) {
+func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string, rtimer uint) (*Gossiper, error) {
 	// For UIPort
 	UIUdpAddr, err := net.ResolveUDPAddr("udp4", ":"+UIPort)
 	if err != nil {
@@ -56,10 +57,11 @@ func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string) (*Go
 		peers:            make(map[string]Peer, 0),
 		vectorClock:      make([]PeerStatus, 0),
 		idMessage:        1,
-		messagesReceived: make(map[string](map[uint32]RumorMessage), 0),
+		MessagesReceived: make(map[string](map[uint32]RumorMessage), 0),
 		exchangeEnded:    make(chan bool),
 		routingTable:     *newRoutingTable(),
 		mutex:            &sync.Mutex{},
+		rtimer:           rtimer,
 	}
 
 	for _, peerAddr := range peerAddrs {
@@ -108,9 +110,23 @@ func (g *Gossiper) AddPeer(address net.UDPAddr) {
 	}
 }
 
-func (g Gossiper) sendMessage(mess GossipMessage, addr net.UDPAddr) error {
-	messEncode, err := protobuf.Encode(&mess)
+func (g Gossiper) sendRumorMessage(message RumorMessage, addr net.UDPAddr) error {
+	gossipMessage := GossipMessage{Rumor: &message}
+	fmt.Println("ID Rmessge send :", message.ID)
+	fmt.Println("Message send :", gossipMessage)
+	messEncode, err := protobuf.Encode(&gossipMessage)
 	if err != nil {
+		fmt.Println("error protobuf")
+		return err
+	}
+	g.gossipConn.WriteToUDP(messEncode, &addr)
+	return nil
+}
+
+func (g Gossiper) sendStatusMessage(addr net.UDPAddr) error {
+	messEncode, err := protobuf.Encode(&GossipMessage{Status: &StatusMessage{Want: g.vectorClock}})
+	if err != nil {
+		fmt.Println("error protobuf")
 		return err
 	}
 	g.gossipConn.WriteToUDP(messEncode, &addr)
@@ -118,10 +134,10 @@ func (g Gossiper) sendMessage(mess GossipMessage, addr net.UDPAddr) error {
 }
 
 //send a message to all known peers excepted Peer
-func (g Gossiper) sendToAllPeers(mess GossipMessage, excludeAddr *net.UDPAddr) {
+func (g Gossiper) sendRumorToAllPeers(mess RumorMessage, excludeAddr *net.UDPAddr) {
 	for _, p := range g.peers {
 		if p.addr.String() != excludeAddr.String() {
-			g.sendMessage(mess, p.addr)
+			g.sendRumorMessage(mess, p.addr)
 		}
 	}
 }
@@ -154,14 +170,14 @@ func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, nbByte int, isFromCl
 	protobuf.Decode(buffer, mess)
 
 	if mess.Rumor != nil {
-		g.acceptRumorMessage(*mess.Rumor, *addr, isFromClient)
+		g.AcceptRumorMessage(*mess.Rumor, *addr, isFromClient)
 	} else if mess.Status != nil {
 		g.acceptStatusMessage(*mess.Status, addr)
 	}
 }
 
 //Callback function, call when a message is received
-func (g *Gossiper) acceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFromClient bool) {
+func (g *Gossiper) AcceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFromClient bool) {
 
 	if !isFromClient && g.alreadySeen(mess.ID, mess.Origin) {
 		return
@@ -180,6 +196,7 @@ func (g *Gossiper) acceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 	//}
 
 	g.mutex.Lock()
+	fmt.Println("DSDV", mess.Origin+":"+addr.String())
 	g.routingTable.add(mess.Origin, addr.String())
 	g.mutex.Unlock()
 
@@ -211,7 +228,7 @@ func (g Gossiper) forward(message RumorMessage) {
 	if addr != "" {
 		UDPAddr, err := net.ResolveUDPAddr("udp4", addr)
 		if err == nil {
-			g.sendMessage(GossipMessage{Rumor: &message}, *UDPAddr)
+			g.sendRumorMessage(message, *UDPAddr)
 		}
 	}
 
@@ -224,7 +241,7 @@ func (g Gossiper) propagateRumorMessage(mess RumorMessage, excludedAddrs string)
 	for coin == 1 && peer != nil {
 
 		fmt.Println("MONGERING with", peer.addr.String())
-		g.sendMessage(GossipMessage{Rumor: &mess}, peer.addr)
+		g.sendRumorMessage(mess, peer.addr)
 
 		peer = g.getRandomPeer("")
 		coin = rand.Int() % 2
@@ -240,11 +257,13 @@ func (g *Gossiper) acceptStatusMessage(mess StatusMessage, addr *net.UDPAddr) {
 	g.printDebugStatus(mess, *addr)
 
 	isMessageToAsk, node, id := g.compareVectorClocks(mess.Want)
-	rm := g.messagesReceived[node][id]
-	messToSend := GossipMessage{Rumor: &rm}
+	messToSend := g.MessagesReceived[node][id]
 	if node != "" {
+		fmt.Println(g.MessagesReceived)
+		fmt.Println(mess.Want)
+		fmt.Println("[acceptStatus] sending mess from", node, "ID", id)
 		fmt.Println("MONGERING with", addr.String())
-		g.sendMessage(messToSend, *addr)
+		g.sendRumorMessage(messToSend, *addr)
 	}
 	if isMessageToAsk {
 		g.sendStatusMessage(*addr)
@@ -287,7 +306,7 @@ func (g Gossiper) printDebugRumor(mess RumorMessage, lastHopIP string, isFromCli
 }
 
 func (g Gossiper) alreadySeen(id uint32, nodeName string) bool {
-	_, ok := g.messagesReceived[nodeName][id]
+	_, ok := g.MessagesReceived[nodeName][id]
 	return ok
 }
 
@@ -320,15 +339,11 @@ func (g Gossiper) checkOnAlreadySeen(nextID uint32, nodeName string) {
 
 func (g Gossiper) storeRumorMessage(mess RumorMessage, id uint32, nodeName string) {
 	g.mutex.Lock()
-	if g.messagesReceived[nodeName] == nil {
-		g.messagesReceived[nodeName] = make(map[uint32]RumorMessage)
+	if g.MessagesReceived[nodeName] == nil {
+		g.MessagesReceived[nodeName] = make(map[uint32]RumorMessage)
 	}
-	g.messagesReceived[nodeName][id] = mess
+	g.MessagesReceived[nodeName][id] = mess
 	g.mutex.Unlock()
-}
-
-func (g Gossiper) sendStatusMessage(addr net.UDPAddr) {
-	g.sendMessage(GossipMessage{Status: &StatusMessage{Want: g.vectorClock}}, addr)
 }
 
 func (g *Gossiper) antiEntropy() {
@@ -395,7 +410,7 @@ func genRouteRumor() (RumorMessage) {
 }
 
 func (g Gossiper) routeRumorDeamon() {
-	tick := time.NewTicker(time.Minute)
+	tick := time.NewTicker(time.Duration(g.rtimer) * time.Second)
 	for {
 		<-tick.C
 		g.sendRouteRumor()
@@ -403,5 +418,5 @@ func (g Gossiper) routeRumorDeamon() {
 }
 
 func (g *Gossiper) sendRouteRumor() {
-	g.acceptRumorMessage(genRouteRumor(), *g.gossipAddr, true)
+	g.AcceptRumorMessage(genRouteRumor(), *g.gossipAddr, true)
 }
