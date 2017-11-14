@@ -18,11 +18,12 @@ func main() {
 
 	// Parsing inputs
 	UIPort := flag.String("UIPort", "10000", "UIPort")
-	gossipPort := flag.String("gossipAddr", "localhost:5000", "gossipAddr")
-	nodeName := flag.String("name", "nodeA", "nodeName")
-	peers := flag.String("peers", "", "peers")
-	rtimer := flag.Uint("rtimer", 60, "rtimer")
-	guiAddr := flag.String("guiAddr", "none", "Address of the GUI")
+	gossipPort := flag.String("gossipAddr", "localhost:5000", "gossipAddr:gossipPort")
+	nodeName := flag.String("name", "nodeA", "Name of the node")
+	peers := flag.String("peers", "", "List of peers: addrPeer1:portPeer1_addrPeer2:portPeer2 ...")
+	rtimer := flag.Uint("rtimer", 60, "Delay during two routing message (Developer)")
+	guiAddr := flag.String("guiAddr", "none", "Enable GUI. Address of the GUI have to be " +
+		"precised: guiAddr:guiPort")
 	flag.Parse()
 
 	// Avoid :0 of being a peers if no intial peers are specified
