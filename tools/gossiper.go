@@ -192,16 +192,16 @@ func (g *Gossiper) AcceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 		} else {
 			mess.HopLimit = 10
 		}
+	} else {
+		g.mutex.Lock()
+		fmt.Println("DSDV", mess.Origin+":"+addr.String())
+		g.RoutingTable.add(mess.Origin, addr.String())
+		g.mutex.Unlock()
 	}
 
-	//if mess.PeerMessage.Text != "" {
-	g.printDebugRumor(mess, addr.String(), isFromClient)
-	//}
-
-	g.mutex.Lock()
-	fmt.Println("DSDV", mess.Origin+":"+addr.String())
-	g.RoutingTable.add(mess.Origin, addr.String())
-	g.mutex.Unlock()
+	if mess.Text != "" {
+		g.printDebugRumor(mess, addr.String(), isFromClient)
+	}
 
 	if !mess.IsPrivate() {
 		g.updateVectorClock(mess.Origin, mess.ID)
@@ -413,7 +413,7 @@ func genRouteRumor() (RumorMessage) {
 	return mess
 }
 
-func (g Gossiper) routeRumorDeamon() {
+func (g *Gossiper) routeRumorDeamon() {
 	tick := time.NewTicker(time.Duration(g.rtimer) * time.Second)
 	for {
 		<-tick.C
