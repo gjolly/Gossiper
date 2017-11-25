@@ -32,5 +32,6 @@ Usage of Gossiper:
 
 > If you want to be part of a network, you have to specify at least one peer
 
+
 ### Use the GUI
 Open a web browser and go on guiAddr:guiPort.

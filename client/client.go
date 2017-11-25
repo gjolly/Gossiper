@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net"
 
-	"../tools"
 	"github.com/dedis/protobuf"
+	"../tools/Messages"
 )
 
 func main() {
@@ -26,8 +26,8 @@ func main() {
 		return
 	}
 
-	rmess := tools.RumorMessage{Text: *msg, Dest: *dest}
-	mess := tools.GossipMessage{Rumor: &rmess}
+	rmess := Messages.RumorMessage{Text: *msg, Dest: *dest}
+	mess := Messages.GossipMessage{Rumor: &rmess}
 	buf, err := protobuf.Encode(&mess)
 
 	if err != nil {

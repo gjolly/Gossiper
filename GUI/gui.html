@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<input>
 <head>
     <meta charset="UTF-8">
     <title>Client</title>
@@ -77,6 +77,9 @@
                         table.append(row)
                     }
                     $('#nodeList').html(table.html())
+                    window.setTimeout(function () {
+                                getMessages();
+                            }, 1000);
                 }
             });
         }
@@ -139,5 +142,8 @@
     </tbody>
 </table>
 </body>
+
+<p>Send file:</p>
+<input type="file" id="test">
 
 </html>

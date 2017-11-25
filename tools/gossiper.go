@@ -8,6 +8,7 @@ import (
 
 	"github.com/dedis/protobuf"
 	"sync"
+	"./Messages"
 )
 
 // Gossiper -- Discripe a node of a Gossip network
@@ -18,14 +19,14 @@ type Gossiper struct {
 	gossipConn       *(net.UDPConn)
 	name             string
 	peers            map[string]Peer
-	vectorClock      []PeerStatus
+	vectorClock      []Messages.PeerStatus
 	idMessage        uint32
-	MessagesReceived map[string](map[uint32]RumorMessage)
+	MessagesReceived map[string](map[uint32]Messages.RumorMessage)
 	exchangeEnded    chan bool
 	RoutingTable     RoutingTable
 	mutex            *sync.Mutex
 	rtimer           uint
-	PrivateMessages  []RumorMessage
+	PrivateMessages  []Messages.RumorMessage
 }
 
 // NewGossiper -- Return a new gossiper structure
@@ -56,9 +57,9 @@ func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string, rtim
 		gossipConn:       gossipConn,
 		name:             identifier,
 		peers:            make(map[string]Peer, 0),
-		vectorClock:      make([]PeerStatus, 0),
+		vectorClock:      make([]Messages.PeerStatus, 0),
 		idMessage:        1,
-		MessagesReceived: make(map[string](map[uint32]RumorMessage), 0),
+		MessagesReceived: make(map[string](map[uint32]Messages.RumorMessage), 0),
 		exchangeEnded:    make(chan bool),
 		RoutingTable:     *newRoutingTable(),
 		mutex:            &sync.Mutex{},
@@ -111,8 +112,8 @@ func (g *Gossiper) AddPeer(address net.UDPAddr) {
 	}
 }
 
-func (g Gossiper) sendRumorMessage(message RumorMessage, addr net.UDPAddr) error {
-	gossipMessage := GossipMessage{Rumor: &message}
+func (g Gossiper) sendRumorMessage(message Messages.RumorMessage, addr net.UDPAddr) error {
+	gossipMessage := Messages.GossipMessage{Rumor: &message}
 	messEncode, err := protobuf.Encode(&gossipMessage)
 	if err != nil {
 		fmt.Println("error protobuf")
@@ -123,7 +124,7 @@ func (g Gossiper) sendRumorMessage(message RumorMessage, addr net.UDPAddr) error
 }
 
 func (g Gossiper) sendStatusMessage(addr net.UDPAddr) error {
-	messEncode, err := protobuf.Encode(&GossipMessage{Status: &StatusMessage{Want: g.vectorClock}})
+	messEncode, err := protobuf.Encode(&Messages.GossipMessage{Status: &Messages.StatusMessage{Want: g.vectorClock}})
 	if err != nil {
 		fmt.Println("error protobuf")
 		return err
@@ -133,7 +134,7 @@ func (g Gossiper) sendStatusMessage(addr net.UDPAddr) error {
 }
 
 //send a message to all known peers excepted Peer
-func (g Gossiper) sendRumorToAllPeers(mess RumorMessage, excludeAddr *net.UDPAddr) {
+func (g Gossiper) sendRumorToAllPeers(mess Messages.RumorMessage, excludeAddr *net.UDPAddr) {
 	for _, p := range g.peers {
 		if p.addr.String() != excludeAddr.String() {
 			g.sendRumorMessage(mess, p.addr)
@@ -165,18 +166,24 @@ func (g *Gossiper) Run() {
 }
 
 func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, nbByte int, isFromClient bool) {
-	mess := &GossipMessage{}
+	mess := &Messages.GossipMessage{}
 	protobuf.Decode(buffer, mess)
 
 	if mess.Rumor != nil {
 		g.AcceptRumorMessage(*mess.Rumor, *addr, isFromClient)
 	} else if mess.Status != nil {
 		g.acceptStatusMessage(*mess.Status, addr)
+	} else if mess.ShareFile != nil && isFromClient {
+		g.AcceptShareFile(*mess.ShareFile)
 	}
 }
 
+func (g *Gossiper) AcceptShareFile(mess Messages.ShareFile){
+
+}
+
 //Callback function, call when a message is received
-func (g *Gossiper) AcceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFromClient bool) {
+func (g *Gossiper) AcceptRumorMessage(mess Messages.RumorMessage, addr net.UDPAddr, isFromClient bool) {
 
 	if !isFromClient && g.alreadySeen(mess.ID, mess.Origin) {
 		return
@@ -221,12 +228,12 @@ func (g *Gossiper) AcceptRumorMessage(mess RumorMessage, addr net.UDPAddr, isFro
 	}
 }
 
-func (g *Gossiper) receivePrivateMessage(message RumorMessage) {
+func (g *Gossiper) receivePrivateMessage(message Messages.RumorMessage) {
 	fmt.Println("PRIVATE:", message.Origin+":"+fmt.Sprint(message.HopLimit)+":"+message.Text)
 	g.PrivateMessages = append(g.PrivateMessages, message)
 }
 
-func (g Gossiper) forward(message RumorMessage) {
+func (g Gossiper) forward(message Messages.RumorMessage) {
 	message.HopLimit -= 1
 	addr := g.RoutingTable.FindNextHop(message.Dest)
 	if addr != "" {
@@ -239,7 +246,7 @@ func (g Gossiper) forward(message RumorMessage) {
 
 }
 
-func (g Gossiper) propagateRumorMessage(mess RumorMessage, excludedAddrs string) {
+func (g Gossiper) propagateRumorMessage(mess Messages.RumorMessage, excludedAddrs string) {
 	coin := 1
 	peer := g.getRandomPeer(excludedAddrs)
 
@@ -257,7 +264,7 @@ func (g Gossiper) propagateRumorMessage(mess RumorMessage, excludedAddrs string)
 	}
 }
 
-func (g *Gossiper) acceptStatusMessage(mess StatusMessage, addr *net.UDPAddr) {
+func (g *Gossiper) acceptStatusMessage(mess Messages.StatusMessage, addr *net.UDPAddr) {
 	g.AddPeer(*addr)
 	g.printDebugStatus(mess, *addr)
 	fmt.Println("VectorClock:", g.vectorClock)
@@ -289,7 +296,7 @@ func (g Gossiper) printPeerList() {
 	fmt.Println()
 }
 
-func (g Gossiper) printDebugStatus(mess StatusMessage, addr net.UDPAddr) {
+func (g Gossiper) printDebugStatus(mess Messages.StatusMessage, addr net.UDPAddr) {
 	fmt.Print("STATUS from ", addr.String())
 	for _, peerStatus := range mess.Want {
 		fmt.Print(" origin ", peerStatus.Identifier, " nextID ", peerStatus.NextID)
@@ -298,7 +305,7 @@ func (g Gossiper) printDebugStatus(mess StatusMessage, addr net.UDPAddr) {
 	g.printPeerList()
 }
 
-func (g Gossiper) printDebugRumor(mess RumorMessage, lastHopIP string, isFromClient bool) {
+func (g Gossiper) printDebugRumor(mess Messages.RumorMessage, lastHopIP string, isFromClient bool) {
 	if isFromClient {
 		fmt.Println("CLIENT", mess, g.name)
 	} else {
@@ -329,7 +336,7 @@ func (g *Gossiper) updateVectorClock(name string, id uint32) {
 	}
 	if !find && id == 1 {
 		g.mutex.Lock()
-		g.vectorClock = append(g.vectorClock, PeerStatus{Identifier: name, NextID: 2})
+		g.vectorClock = append(g.vectorClock, Messages.PeerStatus{Identifier: name, NextID: 2})
 		g.mutex.Unlock()
 		g.checkOnAlreadySeen(2, name)
 	}
@@ -341,10 +348,10 @@ func (g Gossiper) checkOnAlreadySeen(nextID uint32, nodeName string) {
 	}
 }
 
-func (g Gossiper) storeRumorMessage(mess RumorMessage, id uint32, nodeName string) {
+func (g Gossiper) storeRumorMessage(mess Messages.RumorMessage, id uint32, nodeName string) {
 	g.mutex.Lock()
 	if g.MessagesReceived[nodeName] == nil {
-		g.MessagesReceived[nodeName] = make(map[uint32]RumorMessage)
+		g.MessagesReceived[nodeName] = make(map[uint32]Messages.RumorMessage)
 	}
 	g.MessagesReceived[nodeName][id] = mess
 	g.mutex.Unlock()
@@ -361,7 +368,7 @@ func (g *Gossiper) antiEntropy() {
 	}
 }
 
-func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (isMessageToAsk bool, node string, id uint32) {
+func (g Gossiper) compareVectorClocks(vectorClock []Messages.PeerStatus) (isMessageToAsk bool, node string, id uint32) {
 	isMessageToAsk = false
 	find := true
 	node = ""
@@ -406,8 +413,8 @@ func (g Gossiper) compareVectorClocks(vectorClock []PeerStatus) (isMessageToAsk 
 	return
 }
 
-func genRouteRumor() (RumorMessage) {
-	mess := RumorMessage{
+func genRouteRumor() (Messages.RumorMessage) {
+	mess := Messages.RumorMessage{
 		Text: "",
 	}
 	return mess

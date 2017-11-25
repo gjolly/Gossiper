@@ -1,4 +1,4 @@
-package tools
+package Messages
 
 type PeerStatus struct {
 	Identifier string

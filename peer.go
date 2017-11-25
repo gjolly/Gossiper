@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"./tools"
+	"./tools/Messages"
 	"./GUI"
 )
 
@@ -57,9 +58,9 @@ func main() {
 }
 
 func (p *Peer) sendMsg(msg string) {
-	p.gossiper.AcceptRumorMessage(tools.RumorMessage{Text:msg}, *p.webServer.Addr, true)
+	p.gossiper.AcceptRumorMessage(Messages.RumorMessage{Text:msg}, *p.webServer.Addr, true)
 }
 
 func (p *Peer) sendPrivateMsg(msg, dest string){
-	p.gossiper.AcceptRumorMessage(tools.RumorMessage{Dest:dest, Text:msg}, *p.webServer.Addr, true)
+	p.gossiper.AcceptRumorMessage(Messages.RumorMessage{Dest:dest, Text:msg}, *p.webServer.Addr, true)
 }

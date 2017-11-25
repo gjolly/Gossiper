@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"encoding/json"
 	"../tools"
+	"../tools/Messages"
 )
 
 type WebServer struct {
@@ -16,13 +17,13 @@ type WebServer struct {
 
 	sendMsg         func(string)
 	sendPrivateMsg  func(string, string)
-	messages        *map[string](map[uint32]tools.RumorMessage)
-	privateMessages *[]tools.RumorMessage
+	messages        *map[string](map[uint32]Messages.RumorMessage)
+	privateMessages *[]Messages.RumorMessage
 	routingTable    *tools.RoutingTable
 }
 
 func NewWebServer(servAddr string, sendMsg func(string), sendPrivateMsg func(string, string),
-	messages *map[string](map[uint32]tools.RumorMessage), privateMessages *[]tools.RumorMessage, routingTable *tools.RoutingTable) (ws *WebServer) {
+	messages *map[string](map[uint32]Messages.RumorMessage), privateMessages *[]Messages.RumorMessage, routingTable *tools.RoutingTable) (ws *WebServer) {
 	addr, err := net.ResolveUDPAddr("udp4", servAddr)
 	if err != nil {
 		panic(err)

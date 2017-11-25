@@ -1,4 +1,4 @@
-package tools
+package Messages
 
 type RumorMessage struct {
 	Origin   string
