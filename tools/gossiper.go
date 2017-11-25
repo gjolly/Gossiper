@@ -9,6 +9,7 @@ import (
 	"github.com/dedis/protobuf"
 	"sync"
 	"./Messages"
+	"os"
 )
 
 // Gossiper -- Discripe a node of a Gossip network
@@ -27,6 +28,7 @@ type Gossiper struct {
 	mutex            *sync.Mutex
 	rtimer           uint
 	PrivateMessages  []Messages.RumorMessage
+	FileShared       []MetaData
 }
 
 // NewGossiper -- Return a new gossiper structure
@@ -178,8 +180,25 @@ func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, nbByte int, isFromCl
 	}
 }
 
-func (g *Gossiper) AcceptShareFile(mess Messages.ShareFile){
+// Scan and store metadata when a file is shared
+func (g *Gossiper) AcceptShareFile(mess Messages.ShareFile) {
+	file, err := os.Open(mess.Path)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
 
+	metaHash, err := scanFile(file)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	size := getSizeFile(file)
+
+	metaData := MetaData{file.Name(), size, mess.Path, metaHash}
+	g.FileShared = append(g.FileShared, metaData)
 }
 
 //Callback function, call when a message is received
