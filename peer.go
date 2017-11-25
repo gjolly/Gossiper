@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"./tools"
-	"./tools/Messages"
-	"./GUI"
+	"github.com/gjolly/Gossiper/tools"
+	"github.com/gjolly/Gossiper/tools/Messages"
+	"github.com/gjolly/Gossiper/GUI"
 )
 
 type Peer struct {

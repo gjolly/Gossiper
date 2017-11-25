@@ -4,7 +4,7 @@ import (
 	"testing"
 	"os"
 
-	"./Messages"
+	"github.com/gjolly/Gossiper/tools/Messages"
 	"fmt"
 )
 

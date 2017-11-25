@@ -8,7 +8,7 @@ import (
 
 	"github.com/dedis/protobuf"
 	"sync"
-	"./Messages"
+	"github.com/gjolly/Gossiper/tools/Messages"
 	"os"
 )
 

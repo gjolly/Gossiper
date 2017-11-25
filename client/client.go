@@ -6,7 +6,7 @@ import (
 	"net"
 
 	"github.com/dedis/protobuf"
-	"../tools/Messages"
+	"github.com/gjolly/Gossiper/tools/Messages"
 )
 
 func main() {
