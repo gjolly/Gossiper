@@ -13,6 +13,7 @@ func main() {
 	port := flag.String("UIPort", "10000", "UIPort")
 	msg := flag.String("msg", "hello", "Message")
 	dest := flag.String("Dest", "", "Specify a destination for a private message")
+	file := flag.String("file", "", "File to share")
 	flag.Parse()
 
 	udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:" + *port)
@@ -26,8 +27,13 @@ func main() {
 		return
 	}
 
-	rmess := Messages.RumorMessage{Text: *msg, Dest: *dest}
-	mess := Messages.GossipMessage{Rumor: &rmess}
+	var mess Messages.GossipMessage
+	if *file == "" {
+		rmess := Messages.RumorMessage{Text: *msg, Dest: *dest}
+		mess = Messages.GossipMessage{Rumor: &rmess}
+	} else {
+		mess = Messages.GossipMessage{ShareFile:&Messages.ShareFile{*file}}
+	}
 	buf, err := protobuf.Encode(&mess)
 
 	if err != nil {

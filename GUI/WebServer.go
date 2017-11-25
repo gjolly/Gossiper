@@ -17,19 +17,22 @@ type WebServer struct {
 
 	sendMsg         func(string)
 	sendPrivateMsg  func(string, string)
+	share 			func(string)
 	messages        *map[string](map[uint32]Messages.RumorMessage)
 	privateMessages *[]Messages.RumorMessage
 	routingTable    *tools.RoutingTable
 }
 
-func NewWebServer(servAddr string, sendMsg func(string), sendPrivateMsg func(string, string),
-	messages *map[string](map[uint32]Messages.RumorMessage), privateMessages *[]Messages.RumorMessage, routingTable *tools.RoutingTable) (ws *WebServer) {
+func NewWebServer(servAddr string, sendMsg func(string), share func(string),sendPrivateMsg func(string, string),
+	messages *map[string](map[uint32]Messages.RumorMessage),
+	privateMessages *[]Messages.RumorMessage, routingTable *tools.RoutingTable) (ws *WebServer, ) {
+
 	addr, err := net.ResolveUDPAddr("udp4", servAddr)
 	if err != nil {
 		panic(err)
 	}
 	conn, err := net.ListenUDP("udp4", addr)
-	return &WebServer{conn, addr, sendMsg, sendPrivateMsg,
+	return &WebServer{conn, addr, sendMsg, sendPrivateMsg, share,
 		messages, privateMessages, routingTable}
 }
 
@@ -40,6 +43,7 @@ func (ws WebServer) Run() {
 	r.HandleFunc("/messReceived", ws.messageReceived)
 	r.HandleFunc("/getPrivateMessages", ws.getPrivateMessages)
 	r.HandleFunc("/nodes", ws.nodes)
+	r.HandleFunc("/shareFile", ws.shareFile)
 	r.HandleFunc("/", ws.sendPage)
 
 	http.ListenAndServe(ws.Addr.String(), r)
@@ -88,4 +92,9 @@ func (ws WebServer) sendPrivate(response http.ResponseWriter, request *http.Requ
 	node := request.PostFormValue("node")
 	fmt.Println("WebServer: private mess to send = ", node, message)
 	ws.sendPrivateMsg(message, node)
+}
+
+func (ws WebServer) shareFile(response http.ResponseWriter, request *http.Request) {
+	file := request.PostFormValue("fileShared")
+	ws.share(file)
 }

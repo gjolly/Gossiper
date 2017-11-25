@@ -23,7 +23,7 @@ func main() {
 	nodeName := flag.String("name", "nodeA", "Name of the node")
 	peers := flag.String("peers", "", "List of peers: addrPeer1:portPeer1_addrPeer2:portPeer2 ...")
 	rtimer := flag.Uint("rtimer", 60, "Delay during two routing message (Developer)")
-	guiAddr := flag.String("guiAddr", "none", "Enable GUI. Address of the GUI have to be " +
+	guiAddr := flag.String("guiAddr", "none", "Enable GUI. Address of the GUI have to be "+
 		"precised: guiAddr:guiPort")
 	flag.Parse()
 
@@ -46,21 +46,26 @@ func main() {
 		return
 	}
 
-	if *guiAddr != "none"{
+	if *guiAddr != "none" {
 		// Creating WebServer
-		peer.webServer = GUI.NewWebServer(*guiAddr, peer.sendMsg, peer.sendPrivateMsg, &peer.gossiper.MessagesReceived,
+		peer.webServer = GUI.NewWebServer(*guiAddr, peer.sendMsg, peer.shareFile, peer.sendPrivateMsg,
+			&peer.gossiper.MessagesReceived,
 			&peer.gossiper.PrivateMessages, &peer.gossiper.RoutingTable)
 		fmt.Println("Peer: server addr=", peer.webServer.Addr)
-		go 	peer.webServer.Run()
+		go peer.webServer.Run()
 	}
 
 	peer.gossiper.Run()
 }
 
 func (p *Peer) sendMsg(msg string) {
-	p.gossiper.AcceptRumorMessage(Messages.RumorMessage{Text:msg}, *p.webServer.Addr, true)
+	p.gossiper.AcceptRumorMessage(Messages.RumorMessage{Text: msg}, *p.webServer.Addr, true)
 }
 
-func (p *Peer) sendPrivateMsg(msg, dest string){
-	p.gossiper.AcceptRumorMessage(Messages.RumorMessage{Dest:dest, Text:msg}, *p.webServer.Addr, true)
+func (p *Peer) sendPrivateMsg(msg, dest string) {
+	p.gossiper.AcceptRumorMessage(Messages.RumorMessage{Dest: dest, Text: msg}, *p.webServer.Addr, true)
+}
+
+func (p *Peer) shareFile(file string){
+	p.gossiper.AcceptShareFile(Messages.ShareFile{"../tests" + file})
 }

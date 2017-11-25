@@ -25,7 +25,6 @@ func TestScanner_Read(t *testing.T) {
 		fmt.Printf("%x\n", buf)
 		nb, err = scan.Read(buf)
 	}
-	fmt.Println()
 }
 
 func TestScanFile(*testing.T) {

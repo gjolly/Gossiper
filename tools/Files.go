@@ -14,6 +14,10 @@ type MetaData struct {
 	metaHash     []byte
 }
 
+func (m MetaData) String() (string){
+	return fmt.Sprintf("%s\t%d Bytes\t%s\t%x", m.Name, m.size, m.pathMetaFile, m.metaHash)
+}
+
 // Reader to compute the hash of each 8kb of file
 type scanner struct {
 	file io.Reader

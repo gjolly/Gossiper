@@ -84,6 +84,16 @@
             });
         }
 
+        function shareFile(node) {
+            var file = document.getElementById('shareFile').value;
+            console.log(file);
+            $.ajax({
+                type: "POST",
+                url: "/shareFile",
+                data: {fileShared: file}
+            });
+        }
+
         function sendPrivate(node) {
             var msg = document.getElementById('msg').value;
             console.log(msg);
@@ -144,6 +154,6 @@
 </body>
 
 <p>Send file:</p>
-<input type="file" id="test">
+<input type="file" id="shareFile">
 
 </html>

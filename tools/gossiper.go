@@ -197,8 +197,9 @@ func (g *Gossiper) AcceptShareFile(mess Messages.ShareFile) {
 
 	size := getSizeFile(file)
 
-	metaData := MetaData{file.Name(), size, mess.Path, metaHash}
+	metaData := MetaData{file.Name(), size, mess.Path + "_meta", metaHash}
 	g.FileShared = append(g.FileShared, metaData)
+	fmt.Println("FILE", file.Name(), "of", size, "Bytes", "is now shared")
 }
 
 //Callback function, call when a message is received
