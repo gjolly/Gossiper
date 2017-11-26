@@ -63,7 +63,7 @@ func (p *Peer) sendMsg(msg string) {
 }
 
 func (p *Peer) sendPrivateMsg(msg, dest string) {
-	p.gossiper.AcceptRumorMessage(Messages.RumorMessage{Dest: dest, Text: msg}, *p.webServer.Addr, true)
+	p.gossiper.AcceptPrivateMessage(Messages.PrivateMessage{Dest: dest, Text: msg}, *p.webServer.Addr, true)
 }
 
 func (p *Peer) shareFile(file string){

@@ -28,11 +28,14 @@ func main() {
 	}
 
 	var mess Messages.GossipMessage
-	if *file == "" {
-		rmess := Messages.RumorMessage{Text: *msg, Dest: *dest}
+	if *file == "" && *dest == "" {
+		rmess := Messages.RumorMessage{Text: *msg}
 		mess = Messages.GossipMessage{Rumor: &rmess}
-	} else {
-		mess = Messages.GossipMessage{ShareFile:&Messages.ShareFile{*file}}
+	} else if *dest != "" {
+		pmess := Messages.PrivateMessage{Text: *msg, Dest: *dest}
+		mess = Messages.GossipMessage{PrivateMessage: &pmess}
+	} else if *file != "" {
+		mess = Messages.GossipMessage{ShareFile: &Messages.ShareFile{*file}}
 	}
 	buf, err := protobuf.Encode(&mess)
 

@@ -27,7 +27,7 @@ type Gossiper struct {
 	RoutingTable     RoutingTable
 	mutex            *sync.Mutex
 	rtimer           uint
-	PrivateMessages  []Messages.RumorMessage
+	PrivateMessages  []Messages.PrivateMessage
 	FileShared       []MetaData
 }
 
@@ -114,32 +114,11 @@ func (g *Gossiper) AddPeer(address net.UDPAddr) {
 	}
 }
 
-func (g Gossiper) sendRumorMessage(message Messages.RumorMessage, addr net.UDPAddr) error {
-	gossipMessage := Messages.GossipMessage{Rumor: &message}
-	messEncode, err := protobuf.Encode(&gossipMessage)
-	if err != nil {
-		fmt.Println("error protobuf")
-		return err
-	}
-	g.gossipConn.WriteToUDP(messEncode, &addr)
-	return nil
-}
-
-func (g Gossiper) sendStatusMessage(addr net.UDPAddr) error {
-	messEncode, err := protobuf.Encode(&Messages.GossipMessage{Status: &Messages.StatusMessage{Want: g.vectorClock}})
-	if err != nil {
-		fmt.Println("error protobuf")
-		return err
-	}
-	g.gossipConn.WriteToUDP(messEncode, &addr)
-	return nil
-}
-
 //send a message to all known peers excepted Peer
 func (g Gossiper) sendRumorToAllPeers(mess Messages.RumorMessage, excludeAddr *net.UDPAddr) {
 	for _, p := range g.peers {
 		if p.addr.String() != excludeAddr.String() {
-			g.sendRumorMessage(mess, p.addr)
+			mess.Send(g.gossipConn, p.addr)
 		}
 	}
 }
@@ -153,7 +132,7 @@ func (g *Gossiper) listenConn(conn *net.UDPConn, isFromClient bool) {
 		bufferMess = make([]byte, 2048)
 		nbBytes, addr, err = conn.ReadFromUDP(bufferMess)
 		if err == nil {
-			go g.accept(bufferMess, addr, nbBytes, isFromClient)
+			go g.accept(bufferMess[0:nbBytes], addr, isFromClient)
 		}
 	}
 }
@@ -167,17 +146,36 @@ func (g *Gossiper) Run() {
 	g.routeRumorDeamon()
 }
 
-func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, nbByte int, isFromClient bool) {
-	mess := &Messages.GossipMessage{}
-	protobuf.Decode(buffer, mess)
+func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, isFromClient bool) {
+	mess := Messages.GossipMessage{}
+	err := protobuf.Decode(buffer, &mess)
+	if err != nil {
+		fmt.Println("Protobuf:", err)
+	}
 
 	if mess.Rumor != nil {
 		g.AcceptRumorMessage(*mess.Rumor, *addr, isFromClient)
+	} else if mess.PrivateMessage != nil {
+		g.AcceptPrivateMessage(*mess.PrivateMessage, *addr, isFromClient)
 	} else if mess.Status != nil {
 		g.acceptStatusMessage(*mess.Status, addr)
 	} else if mess.ShareFile != nil && isFromClient {
 		g.AcceptShareFile(*mess.ShareFile)
+	} else if mess.DataReply != nil {
+		g.AcceptDataReply(*mess.DataReply)
+	} else if mess.DataRequest != nil {
+		g.AcceptDataRequest(*mess.DataRequest)
+	} else {
+		fmt.Println("Gossip message received but unknown")
 	}
+}
+
+func (g *Gossiper) AcceptDataReply(mess Messages.DataReply) {
+
+}
+
+func (g *Gossiper) AcceptDataRequest(mess Messages.DataRequest) {
+
 }
 
 // Scan and store metadata when a file is shared
@@ -202,6 +200,33 @@ func (g *Gossiper) AcceptShareFile(mess Messages.ShareFile) {
 	fmt.Println("FILE", file.Name(), "of", size, "Bytes", "is now shared")
 }
 
+func (g *Gossiper) AcceptPrivateMessage(mess Messages.PrivateMessage, addr net.UDPAddr, isFromClient bool) {
+	if !isFromClient && g.alreadySeen(mess.ID, mess.Origin) {
+		return
+	}
+	fmt.Println("PRIVATE RECEIVED origin", mess.Origin, "dest", mess.GetDest(), "HopLimit", mess.GetHopLimit())
+
+	if isFromClient {
+		mess.Origin = g.name
+		mess.HopLimit = 10
+		fmt.Println("CLIENT PRIVATE", mess, g.name)
+	} else {
+		g.mutex.Lock()
+		fmt.Println("DSDV", mess.Origin+":"+addr.String())
+		g.RoutingTable.add(mess.Origin, addr.String())
+		g.mutex.Unlock()
+	}
+
+	if mess.GetHopLimit() > 1 && mess.GetDest() != g.name {
+		g.forward(&mess)
+	} else if mess.Dest == g.name {
+		g.receivePrivateMessage(mess)
+	} else {
+		fmt.Println("Private Message", mess, "DELETED")
+	}
+
+}
+
 //Callback function, call when a message is received
 func (g *Gossiper) AcceptRumorMessage(mess Messages.RumorMessage, addr net.UDPAddr, isFromClient bool) {
 
@@ -211,14 +236,10 @@ func (g *Gossiper) AcceptRumorMessage(mess Messages.RumorMessage, addr net.UDPAd
 
 	if isFromClient {
 		mess.Origin = g.name
-		if !mess.IsPrivate() {
-			g.mutex.Lock()
-			mess.ID = g.idMessage
-			g.idMessage++
-			g.mutex.Unlock()
-		} else {
-			mess.HopLimit = 10
-		}
+		g.mutex.Lock()
+		mess.ID = g.idMessage
+		g.idMessage++
+		g.mutex.Unlock()
 	} else {
 		g.mutex.Lock()
 		fmt.Println("DSDV", mess.Origin+":"+addr.String())
@@ -230,38 +251,33 @@ func (g *Gossiper) AcceptRumorMessage(mess Messages.RumorMessage, addr net.UDPAd
 		g.printDebugRumor(mess, addr.String(), isFromClient)
 	}
 
-	if !mess.IsPrivate() {
-		g.updateVectorClock(mess.Origin, mess.ID)
-		g.storeRumorMessage(mess, mess.ID, mess.Origin)
+	g.updateVectorClock(mess.Origin, mess.ID)
+	g.storeRumorMessage(mess, mess.ID, mess.Origin)
 
-		if !isFromClient {
-			g.sendStatusMessage(addr)
-			g.AddPeer(addr)
-		}
-		g.propagateRumorMessage(mess, addr.String())
-	} else {
-		if mess.HopLimit > 1 && mess.Dest != g.name {
-			g.forward(mess)
-		} else if mess.Dest == g.name {
-			g.receivePrivateMessage(mess)
-		}
+	if !isFromClient {
+		statusMessage := Messages.StatusMessage{g.vectorClock}
+		statusMessage.Send(g.gossipConn, addr)
+		g.AddPeer(addr)
 	}
+	g.propagateRumorMessage(mess, addr.String())
 }
 
-func (g *Gossiper) receivePrivateMessage(message Messages.RumorMessage) {
+func (g *Gossiper) receivePrivateMessage(message Messages.PrivateMessage) {
 	fmt.Println("PRIVATE:", message.Origin+":"+fmt.Sprint(message.HopLimit)+":"+message.Text)
 	g.PrivateMessages = append(g.PrivateMessages, message)
 }
 
-func (g Gossiper) forward(message Messages.RumorMessage) {
-	message.HopLimit -= 1
-	addr := g.RoutingTable.FindNextHop(message.Dest)
+func (g Gossiper) forward(message Messages.Private) {
+	message.DecHopLimit()
+	addr := g.RoutingTable.FindNextHop(message.GetDest())
 	if addr != "" {
 		UDPAddr, err := net.ResolveUDPAddr("udp4", addr)
 		if err == nil {
-			fmt.Println("FORWARD private msg", message.Dest, addr)
-			g.sendRumorMessage(message, *UDPAddr)
+			fmt.Println("FORWARD private msg", message.GetDest(), addr)
+			message.Send(g.gossipConn, *UDPAddr)
 		}
+	} else {
+		fmt.Println("Private Message", message, "DELETED")
 	}
 
 }
@@ -273,7 +289,7 @@ func (g Gossiper) propagateRumorMessage(mess Messages.RumorMessage, excludedAddr
 	for coin == 1 && peer != nil {
 
 		fmt.Println("MONGERING with", peer.addr.String())
-		g.sendRumorMessage(mess, peer.addr)
+		mess.Send(g.gossipConn, peer.addr)
 
 		peer = g.getRandomPeer("")
 		coin = rand.Int() % 2
@@ -287,15 +303,15 @@ func (g Gossiper) propagateRumorMessage(mess Messages.RumorMessage, excludedAddr
 func (g *Gossiper) acceptStatusMessage(mess Messages.StatusMessage, addr *net.UDPAddr) {
 	g.AddPeer(*addr)
 	g.printDebugStatus(mess, *addr)
-	fmt.Println("VectorClock:", g.vectorClock)
 	isMessageToAsk, node, id := g.compareVectorClocks(mess.Want)
 	messToSend := g.MessagesReceived[node][id]
 	if node != "" {
 		fmt.Println("MONGERING with", addr.String())
-		g.sendRumorMessage(messToSend, *addr)
+		messToSend.Send(g.gossipConn, *addr)
 	}
 	if isMessageToAsk {
-		g.sendStatusMessage(*addr)
+		statusMessage := Messages.StatusMessage{g.vectorClock}
+		statusMessage.Send(g.gossipConn, *addr)
 	}
 	if !isMessageToAsk && node == "" {
 		fmt.Println("IN SYNC WITH", addr.String())
@@ -383,7 +399,8 @@ func (g *Gossiper) antiEntropy() {
 		<-tick.C
 		peer := g.getRandomPeer("")
 		if peer != nil {
-			g.sendStatusMessage(peer.addr)
+			statusMessage := Messages.StatusMessage{g.vectorClock}
+			statusMessage.Send(g.gossipConn, peer.addr)
 		}
 	}
 }

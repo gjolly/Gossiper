@@ -1,9 +1,18 @@
 package Messages
 
+import (
+	"net"
+	"github.com/dedis/protobuf"
+	"fmt"
+)
+
 type GossipMessage struct {
-	Rumor    *RumorMessage
-	Status   *StatusMessage
-	ShareFile *ShareFile
+	Rumor          *RumorMessage
+	Status         *StatusMessage
+	ShareFile      *ShareFile
+	DataRequest    *DataRequest
+	DataReply      *DataReply
+	PrivateMessage *PrivateMessage
 }
 
 func (g GossipMessage) String() string {
@@ -15,4 +24,18 @@ func (g GossipMessage) String() string {
 	}
 
 	return str
+}
+
+func (gm GossipMessage) Send(conn *net.UDPConn, addr net.UDPAddr) error {
+	messEncode, err := protobuf.Encode(&gm)
+	if err != nil {
+		fmt.Println("error protobuf")
+		return err
+	}
+	_, err = conn.WriteToUDP(messEncode, &addr)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

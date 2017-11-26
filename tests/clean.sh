@@ -1,3 +1,3 @@
 #!/bin/bash
 
-rm ../*.log ../gossiper *.log ../build/* ../client/client
+rm ../*.log ../gossiper *.log ../client/client

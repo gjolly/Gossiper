@@ -4,8 +4,8 @@ go build ../
 go build ../client
 
 
-./Gossiper -UIPort=5001 -gossipPort=localhost:10001 -name=nodeB > $init_path/B.log &
-./Gossiper -UIPort=5000 -gossipPort=localhost:10000 -name=nodeA -peers=localhost:10001 > $init_path/A.log &
+./Gossiper -UIPort=5001 -gossipAddr=localhost:10001 -name=nodeB > $init_path/B.log &
+./Gossiper -UIPort=5000 -gossipAddr=localhost:10000 -name=nodeA -peers=localhost:10001 > $init_path/A.log &
 
 sleep 1
 ./client -UIPort=5000 -msg="A->B"
