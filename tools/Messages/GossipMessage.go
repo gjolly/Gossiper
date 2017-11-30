@@ -3,7 +3,7 @@ package Messages
 import (
 	"net"
 	"github.com/dedis/protobuf"
-	"fmt"
+	"log"
 )
 
 type GossipMessage struct {
@@ -13,6 +13,7 @@ type GossipMessage struct {
 	DataRequest    *DataRequest
 	DataReply      *DataReply
 	PrivateMessage *PrivateMessage
+	Download       *DownloadFile
 }
 
 func (g GossipMessage) String() string {
@@ -29,7 +30,7 @@ func (g GossipMessage) String() string {
 func (gm GossipMessage) Send(conn *net.UDPConn, addr net.UDPAddr) error {
 	messEncode, err := protobuf.Encode(&gm)
 	if err != nil {
-		fmt.Println("error protobuf")
+		log.Println(err)
 		return err
 	}
 	_, err = conn.WriteToUDP(messEncode, &addr)

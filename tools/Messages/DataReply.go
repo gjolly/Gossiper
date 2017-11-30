@@ -14,7 +14,7 @@ type DataReply struct {
 }
 
 func (dr *DataReply) DecHopLimit() {
-	dr.HopLimit -= dr.HopLimit
+	dr.HopLimit -= 1
 }
 
 func (dr DataReply) GetHopLimit() (uint32) {
@@ -32,4 +32,12 @@ func (dr DataReply) Send(conn *net.UDPConn, addr net.UDPAddr) error {
 		return err
 	}
 	return nil
+}
+
+func (dr *DataReply) Write(buf []byte) (int, error) {
+	if dr.Data == nil {
+		dr.Data = make([]byte, 0)
+	}
+	dr.Data = append(dr.Data, buf...)
+	return len(buf), nil
 }

@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/dedis/protobuf"
 	"github.com/gjolly/Gossiper/tools/Messages"
+	"encoding/hex"
+	"log"
 )
 
 func main() {
@@ -14,6 +15,7 @@ func main() {
 	msg := flag.String("msg", "hello", "Message")
 	dest := flag.String("Dest", "", "Specify a destination for a private message")
 	file := flag.String("file", "", "File to share")
+	hash := flag.String("request", "", "File to download")
 	flag.Parse()
 
 	udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:" + *port)
@@ -26,27 +28,26 @@ func main() {
 		fmt.Println(err)
 		return
 	}
+	defer conn.Close()
 
 	var mess Messages.GossipMessage
 	if *file == "" && *dest == "" {
 		rmess := Messages.RumorMessage{Text: *msg}
 		mess = Messages.GossipMessage{Rumor: &rmess}
-	} else if *dest != "" {
+	} else if *dest != "" && *file == "" {
 		pmess := Messages.PrivateMessage{Text: *msg, Dest: *dest}
 		mess = Messages.GossipMessage{PrivateMessage: &pmess}
-	} else if *file != "" {
+	} else if *file != "" && *hash == "" {
 		mess = Messages.GossipMessage{ShareFile: &Messages.ShareFile{*file}}
+	} else if *hash != "" && *dest != "" && *file != "" {
+		byteHash, err := hex.DecodeString(*hash)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		mess = Messages.GossipMessage{Download: &Messages.DownloadFile{*file, byteHash, *dest}}
 	}
-	buf, err := protobuf.Encode(&mess)
 
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+	mess.Send(conn, *udpAddr)
 
-	_, err = conn.WriteToUDP(buf, udpAddr)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
 }

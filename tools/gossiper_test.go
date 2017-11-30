@@ -15,6 +15,10 @@ func TestGossiper_AcceptShareFile(t *testing.T) {
 	fmt.Println(gossiper.FileShared)
 }
 
+func TestGossiper_AcceptDataRequest(t *testing.T) {
+	gossiper.AcceptDataRequest(Messages.DataRequest{})
+}
+
 func TestMain(m *testing.M){
 	var err error
 	gossiper, err = NewGossiper("5000", "localhost:10000", "A", make([]string, 0), 60)

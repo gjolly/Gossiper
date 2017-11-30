@@ -2,6 +2,7 @@ package Messages
 
 import (
 	"net"
+	"fmt"
 )
 
 type DataRequest struct {
@@ -12,8 +13,12 @@ type DataRequest struct {
 	HashValue   []byte
 }
 
+func (dr DataRequest) String() string {
+	return fmt.Sprintf("DATA REQUEST from", dr.Origin, "To", dr.Destination)
+}
+
 func (dr *DataRequest) DecHopLimit() {
-	dr.HopLimit -= dr.HopLimit
+	dr.HopLimit -= 1
 }
 
 func (dr DataRequest) GetHopLimit() (uint32) {

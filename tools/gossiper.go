@@ -10,6 +10,9 @@ import (
 	"sync"
 	"github.com/gjolly/Gossiper/tools/Messages"
 	"os"
+	"log"
+	"io"
+	"encoding/hex"
 )
 
 // Gossiper -- Discripe a node of a Gossip network
@@ -28,11 +31,13 @@ type Gossiper struct {
 	mutex            *sync.Mutex
 	rtimer           uint
 	PrivateMessages  []Messages.PrivateMessage
-	FileShared       []MetaData
+	FileShared       map[string]MetaData
+	currentDownloads map[string]MetaData
+	workingPath      string
 }
 
 // NewGossiper -- Return a new gossiper structure
-func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string, rtimer uint) (*Gossiper, error) {
+func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string, rtimer uint, workingPath string) (*Gossiper, error) {
 	// For UIPort
 	UIUdpAddr, err := net.ResolveUDPAddr("udp4", ":"+UIPort)
 	if err != nil {
@@ -66,6 +71,9 @@ func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string, rtim
 		RoutingTable:     *newRoutingTable(),
 		mutex:            &sync.Mutex{},
 		rtimer:           rtimer,
+		FileShared:       make(map[string]MetaData),
+		currentDownloads: make(map[string]MetaData),
+		workingPath:      workingPath,
 	}
 
 	for _, peerAddr := range peerAddrs {
@@ -129,7 +137,7 @@ func (g *Gossiper) listenConn(conn *net.UDPConn, isFromClient bool) {
 	var err error
 	var addr *net.UDPAddr
 	for {
-		bufferMess = make([]byte, 2048)
+		bufferMess = make([]byte, 8*2048)
 		nbBytes, addr, err = conn.ReadFromUDP(bufferMess)
 		if err == nil {
 			go g.accept(bufferMess[0:nbBytes], addr, isFromClient)
@@ -165,39 +173,150 @@ func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, isFromClient bool) {
 		g.AcceptDataReply(*mess.DataReply)
 	} else if mess.DataRequest != nil {
 		g.AcceptDataRequest(*mess.DataRequest)
+	} else if mess.Download != nil {
+		g.AcceptDownload(*mess.Download)
 	} else {
 		fmt.Println("Gossip message received but unknown")
 	}
 }
 
-func (g *Gossiper) AcceptDataReply(mess Messages.DataReply) {
+func (g *Gossiper) AcceptDownload(mess Messages.DownloadFile) {
+	fmt.Println("DOWNLOADING metafile of", mess.FileName, "from", mess.Destination)
 
+	meta := MetaData{mess.FileName, 0, g.workingPath + mess.FileName + "_meta", true, 0}
+
+	request := Messages.DataRequest{g.name, mess.Destination, 10, mess.FileName, mess.HashValue}
+
+	file, err := os.Create(g.workingPath + mess.FileName + "_meta")
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	file.Close()
+	g.currentDownloads[hashToString(mess.HashValue)] = meta
+	g.forward(&request)
+}
+
+func (g *Gossiper) AcceptDataReply(mess Messages.DataReply) {
+	if mess.HopLimit > 1 && mess.Destination != g.name {
+		g.forward(&mess)
+	} else if g.name == mess.Destination {
+		g.receiveFileData(mess.HashValue, mess.Data, mess.Origin)
+	} else {
+		log.Println("DATAREPLY DELETED")
+	}
 }
 
 func (g *Gossiper) AcceptDataRequest(mess Messages.DataRequest) {
+	fmt.Println("Data request: ", hashToString(mess.HashValue))
+	metaData, ok := g.FileShared[hashToString(mess.HashValue)]
 
+	if ok {
+		file, err := os.Open(metaData.path)
+		fmt.Println("Opening", metaData.path, "of size", getSizeFile(file))
+		if err != nil {
+			log.Println("AcceptDataRequest:", err)
+		}
+		defer file.Close()
+
+		reply := Messages.DataReply{g.name, mess.Origin, 10, mess.FileName, mess.HashValue, nil}
+
+		if metaData.isMetaFile {
+			nb, _ := io.Copy(&reply, file)
+			fmt.Println("Nb write", nb, "/", getSizeFile(file), "path", metaData.path)
+		} else {
+			file.Seek(metaData.offset, 0)
+			nb, _ := io.CopyN(&reply, file, 8000)
+			fmt.Println("Nb write", nb, "/", getSizeFile(file), "path", metaData.path)
+		}
+
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		g.forward(&reply)
+	} else {
+		log.Println("File not found")
+	}
+}
+
+func (g *Gossiper) receiveFileData(hash, data []byte, origin string) {
+	strHash := hashToString(hash)
+	metaData, ok := g.currentDownloads[strHash]
+
+	if ok {
+		file, err := os.OpenFile(metaData.path, os.O_RDWR, 0333)
+		if err != nil {
+			log.Println("receiveFileData:", err)
+			return
+		}
+
+		if metaData.isMetaFile {
+			_, err = file.Write(data)
+			file.Close()
+
+			fmt.Println("METAFILE RECEIVED")
+
+			chunks := make(map[string]MetaData)
+			nbChunk, _ := analyseMetaFile(metaData.Name, g.workingPath + metaData.Name, metaData.path, chunks)
+			g.sendRequests(chunks, origin)
+
+			tempFile, _ := os.Create(g.workingPath + metaData.Name)
+			tempFile.Write(make([]byte, nbChunk*8000))
+			tempFile.Close()
+		} else {
+			nb, _ := file.WriteAt(data, metaData.offset)
+
+			fmt.Println("RECEIVED", metaData.Name, "chunk", metaData.offset/8000)
+
+			if nb < 8000 {
+				var remaim int64 = 8000 - int64(nb)
+				fileComplete, err := os.Create(g.workingPath + "_Downloads/" + metaData.Name)
+				if err != nil {
+					log.Println(err)
+				}
+
+				_, err = io.CopyN(fileComplete, file, getSizeFile(file)-remaim)
+				if err != nil {
+					log.Println(err)
+				}
+
+				fmt.Println("RECONSTRUCTED file", file.Name())
+			}
+			file.Close()
+		}
+		if err != nil {
+			log.Println("receiveFileData:", err)
+		}
+		delete(g.currentDownloads, strHash)
+		g.FileShared[strHash] = metaData
+
+	}
+}
+
+func (g *Gossiper) sendRequests(chunks map[string]MetaData, dest string) {
+	var request Messages.DataRequest
+	for chunkHash, chunkMeta := range chunks {
+		chunkHashByte, _ := hex.DecodeString(chunkHash)
+		request = Messages.DataRequest{g.name, dest, 10, chunkMeta.Name, chunkHashByte}
+		fmt.Println("DOWNLOADING", chunkMeta.Name, "chunk", chunkMeta.offset/8000, "from", dest)
+		g.currentDownloads[chunkHash] = chunkMeta
+		g.forward(&request)
+	}
 }
 
 // Scan and store metadata when a file is shared
 func (g *Gossiper) AcceptShareFile(mess Messages.ShareFile) {
-	file, err := os.Open(mess.Path)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	defer file.Close()
-
-	metaHash, err := scanFile(file)
+	metaHash, err := scanFile(g.workingPath + mess.Path)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	size := getSizeFile(file)
-
-	metaData := MetaData{file.Name(), size, mess.Path + "_meta", metaHash}
-	g.FileShared = append(g.FileShared, metaData)
-	fmt.Println("FILE", file.Name(), "of", size, "Bytes", "is now shared")
+	metaData := MetaData{mess.Path, 0, g.workingPath + mess.Path + "_meta", true, 0}
+	g.FileShared[hashToString(metaHash)] = metaData
+	analyseMetaFile(mess.Path, g.workingPath+mess.Path, metaData.path, g.FileShared)
+	fmt.Println("FILE", mess.Path, "of", 0, "Bytes", "is now shared: ", hashToString(metaHash))
 }
 
 func (g *Gossiper) AcceptPrivateMessage(mess Messages.PrivateMessage, addr net.UDPAddr, isFromClient bool) {
@@ -219,7 +338,7 @@ func (g *Gossiper) AcceptPrivateMessage(mess Messages.PrivateMessage, addr net.U
 
 	if mess.GetHopLimit() > 1 && mess.GetDest() != g.name {
 		g.forward(&mess)
-	} else if mess.Dest == g.name {
+	} else if mess.GetDest() == g.name {
 		g.receivePrivateMessage(mess)
 	} else {
 		fmt.Println("Private Message", mess, "DELETED")
@@ -277,7 +396,7 @@ func (g Gossiper) forward(message Messages.Private) {
 			message.Send(g.gossipConn, *UDPAddr)
 		}
 	} else {
-		fmt.Println("Private Message", message, "DELETED")
+		fmt.Println("Forward: Private Message", message, "DELETED")
 	}
 
 }
