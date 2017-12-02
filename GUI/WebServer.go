@@ -18,14 +18,12 @@ type WebServer struct {
 	sendMsg         func(string)
 	sendPrivateMsg  func(string, string)
 	share 			func(string)
-	messages        *map[string](map[uint32]Messages.RumorMessage)
+	messages        tools.ListMessages
 	privateMessages *[]Messages.PrivateMessage
 	routingTable    *tools.RoutingTable
 }
 
-func NewWebServer(servAddr string, sendMsg func(string), share func(string),sendPrivateMsg func(string, string),
-	messages *map[string](map[uint32]Messages.RumorMessage),
-	privateMessages *[]Messages.PrivateMessage, routingTable *tools.RoutingTable) (ws *WebServer, ) {
+func NewWebServer(servAddr string, sendMsg func(string), share func(string),sendPrivateMsg func(string, string), messages tools.ListMessages, privateMessages *[]Messages.PrivateMessage, routingTable *tools.RoutingTable) (ws *WebServer, ) {
 
 	addr, err := net.ResolveUDPAddr("udp4", servAddr)
 	if err != nil {
@@ -64,7 +62,9 @@ func (ws WebServer) sendMessage(response http.ResponseWriter, request *http.Requ
 }
 
 func (ws WebServer) messageReceived(response http.ResponseWriter, request *http.Request) {
-	messages, err := json.Marshal(ws.messages)
+	ws.messages.Mutex.Lock()
+	messages, err := json.Marshal(ws.messages.Messages)
+	ws.messages.Mutex.Unlock()
 	if err != nil {
 		fmt.Println(err)
 	}

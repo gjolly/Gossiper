@@ -21,7 +21,7 @@ func TestGossiper_AcceptDataRequest(t *testing.T) {
 
 func TestMain(m *testing.M){
 	var err error
-	gossiper, err = NewGossiper("5000", "localhost:10000", "A", make([]string, 0), 60)
+	gossiper, err = NewGossiper("5000", "localhost:10000", "A", make([]string, 0), 60, ".")
 	if err != nil {
 		panic(err)
 	}

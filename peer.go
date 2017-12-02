@@ -50,7 +50,7 @@ func main() {
 	if *guiAddr != "none" {
 		// Creating WebServer
 		peer.webServer = GUI.NewWebServer(*guiAddr, peer.sendMsg, peer.shareFile, peer.sendPrivateMsg,
-			&peer.gossiper.MessagesReceived,
+			peer.gossiper.MessagesReceived,
 			&peer.gossiper.PrivateMessages, &peer.gossiper.RoutingTable)
 		fmt.Println("Peer: server addr=", peer.webServer.Addr)
 		go peer.webServer.Run()

@@ -6,6 +6,7 @@ import (
 	"io"
 	"crypto/sha256"
 	"log"
+	"strings"
 )
 
 type MetaData struct {
@@ -32,20 +33,19 @@ func (s scanner) Read(bufOut []byte) (n int, err error) {
 		return 0, BufferTooSmall{}
 	}
 	buf := make([]byte, 8000)
-	h := sha256.New()
 
-	nb, errCpy := io.CopyBuffer(h, s.file, buf)
-
-	if errCpy != nil {
+	nb, errRead := s.file.Read(buf)
+	if errRead != nil && errRead != io.EOF {
 		return 0, err
 	}
 
-	copy(bufOut, h.Sum(nil))
+	h := sha256.Sum256(buf)
+	copy(bufOut[0:32], h[0:32])
 	if nb == 0 {
-		err = io.EOF
+		return 0, io.EOF
 	}
 
-	return int(nb), err
+	return 32, nil
 }
 
 func metaHash(file *os.File) ([]byte) {
@@ -89,7 +89,7 @@ func getSizeFile(file *os.File) (int64) {
 	return fi.Size()
 }
 
-func analyseMetaFile(sharedFileName, sharedFilePath, metaFile string, mapFile map[string]MetaData) (int, error) {
+func analyseMetaFile(sharedFileName, sharedFilePath, metaFile string, files *ListFiles) (int, error) {
 	file, err := os.Open(metaFile)
 	if err != nil {
 		log.Println("Error reading metafile")
@@ -98,21 +98,29 @@ func analyseMetaFile(sharedFileName, sharedFilePath, metaFile string, mapFile ma
 	defer file.Close()
 
 	var offset int64 = 0
-	buf := make([]byte, 8000)
+	buf := make([]byte, 32)
 	nb, err := file.Read(buf)
-	cmpBlocks := 0
 	for nb > 0 {
-		cmpBlocks += 1
 		if err != nil {
 			return 0, err
 		}
-		mapFile[hashToString(buf[0:nb])] = MetaData{sharedFileName, 0, sharedFilePath, false, offset}
+
+		files.Mutex.Lock()
+		files.Files[hashToString(buf[0:nb])] = MetaData{sharedFileName, 0, sharedFilePath, false, offset}
+		files.Mutex.Unlock()
+
 		offset += 8000
 		nb, err = file.Read(buf)
 	}
-	return cmpBlocks, nil
+
+	return int(offset / 8000), nil
 }
 
 func hashToString(hash []byte) string {
 	return fmt.Sprintf("%x", hash)
+}
+
+func getNameFile(path string) (string) {
+	elmts := strings.Split(path, "/")
+	return elmts[len(elmts) - 1]
 }

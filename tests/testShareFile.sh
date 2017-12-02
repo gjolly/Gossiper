@@ -11,7 +11,7 @@ NC='\033[0m'
 DEBUG="false"
 
 outputFiles=()
-file=testFile.txt
+file=testFile
 path_logs=../tests
 
 # Making a simple network:
@@ -40,18 +40,18 @@ startGossip B 10002 10000
 sleep 1
 
 # Share file with A
-cp "$path_logs/testFile.txt" "$path_logs/A"
+cp "$path_logs/$file" "$path_logs/A"
 ./client -UIPort=10001 -file=$file
 sleep 1
 
 # Get file from B
-./client -UIPort=10003 -file=$file -Dest=A -request=ec3326e48292135e90b516771822038fc55422ccfe2ebce6505f39a688ef5f7e 
-sleep 4
+./client -UIPort=10003 -file=$file -Dest=A -request=$(sha256sum $path_logs/A/"$file"_meta)
+sleep 5 
+killall gossiper
 
 #testing
 fail(){
 	echo -e "${RED}*** Failed test $1 ***${NC}"
-  	killall gossiper
 	exit 1
 }
 
@@ -60,5 +60,4 @@ diff -q $path_logs/A/$file $path_logs/B/_Downloads/$file || fail "Files are not 
 
 echo -e "${GREEN}***SUCCESS***${NC}"
 
-killall gossiper
 rm gossiper client
