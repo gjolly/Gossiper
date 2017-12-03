@@ -7,6 +7,9 @@ import (
 	"crypto/sha256"
 	"log"
 	"strings"
+	"github.com/gjolly/Gossiper/tools/Messages"
+	"regexp"
+	"encoding/hex"
 )
 
 type MetaData struct {
@@ -55,16 +58,16 @@ func metaHash(file *os.File) ([]byte) {
 }
 
 // Create the metafile of file and return the metahash of the metafile
-func scanFile(path string) ([]byte, error) {
+func scanFile(path string) (int64, []byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	defer file.Close()
 
 	output, err := os.Create(path + "_meta")
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	defer output.Close()
 
@@ -73,11 +76,11 @@ func scanFile(path string) ([]byte, error) {
 	_, err = io.CopyBuffer(output, scan, buf)
 
 	if err != nil && err != io.EOF {
-		return nil, err
+		return 0, nil, err
 	}
 
 	output.Seek(0, 0)
-	return metaHash(output), nil
+	return getSizeFile(file), metaHash(output), nil
 }
 
 func getSizeFile(file *os.File) (int64) {
@@ -122,5 +125,47 @@ func hashToString(hash []byte) string {
 
 func getNameFile(path string) (string) {
 	elmts := strings.Split(path, "/")
-	return elmts[len(elmts) - 1]
+	return elmts[len(elmts)-1]
+}
+
+func searchFile(keywords []string, files map[string]MetaData, downloadStates map[string]*state) []*Messages.SearchResult {
+	searchResults := make([]*Messages.SearchResult, 0)
+	var fileName string
+	var chunkMap []uint64
+	for hash, metaData := range files {
+		if fileName = metaData.Name; metaData.isMetaFile && matchTest(fileName, keywords) {
+			chunkMap = getChunkMap(hash, files, downloadStates)
+			hashByte, _ := hex.DecodeString(hash)
+			searchResults = append(searchResults, &Messages.SearchResult{fileName, hashByte, chunkMap})
+		}
+	}
+	return searchResults
+}
+
+func getChunkMap(hash string, files map[string]MetaData, downloadStates map[string]*state) []uint64 {
+	if state, ok := downloadStates[hash]; ok {
+		return state.chunkMap()
+	} else if metaData, ok := files[hash]; ok {
+		var chunkMap []uint64
+		if metaData.size % 8000 != 0 {
+			chunkMap = make([]uint64, metaData.size/8000 + 1)
+		} else {
+			chunkMap = make([]uint64, metaData.size/8000)
+		}
+
+		for chunk := range chunkMap {
+			chunkMap[chunk] = uint64(chunk)
+		}
+		return chunkMap
+	}
+	return nil
+}
+
+func matchTest(s1 string, patterns []string) bool {
+	for exp := range patterns {
+		if test, _ := regexp.MatchString(patterns[exp], s1); test {
+			return true
+		}
+	}
+	return false
 }

@@ -17,10 +17,10 @@ import (
 
 // Gossiper -- Discripe a node of a Gossip network
 type Gossiper struct {
-	UIAddr           *(net.UDPAddr)
-	gossipAddr       *(net.UDPAddr)
-	UIConn           *(net.UDPConn)
-	gossipConn       *(net.UDPConn)
+	UIAddr           *net.UDPAddr
+	gossipAddr       *net.UDPAddr
+	UIConn           *net.UDPConn
+	gossipConn       *net.UDPConn
 	name             string
 	peers            ListPeers
 	vectorClock      []Messages.PeerStatus
@@ -35,6 +35,8 @@ type Gossiper struct {
 	currentDownloads ListFiles
 	downloadState    ListStates
 	workingPath      string
+	PendingRequests  PendingRequests
+	searchState      bool
 }
 
 // NewGossiper -- Return a new gossiper structure
@@ -74,8 +76,10 @@ func NewGossiper(UIPort, gossipPort, identifier string, peerAddrs []string, rtim
 		rtimer:           rtimer,
 		FileShared:       ListFiles{make(map[string]MetaData), &sync.RWMutex{}},
 		currentDownloads: ListFiles{make(map[string]MetaData), &sync.RWMutex{}},
-		downloadState:    ListStates{make(map[string]int), make(map[string]int), &sync.RWMutex{}},
+		downloadState:    ListStates{make(map[string]*state), &sync.RWMutex{}},
 		workingPath:      workingPath,
+		PendingRequests:  PendingRequests{make(map[string]*Request), &sync.RWMutex{}, 0},
+		searchState:      false,
 	}
 
 	for _, peerAddr := range peerAddrs {
@@ -182,9 +186,139 @@ func (g *Gossiper) accept(buffer []byte, addr *net.UDPAddr, isFromClient bool) {
 		g.AcceptDataRequest(*mess.DataRequest)
 	} else if mess.Download != nil {
 		g.AcceptDownload(*mess.Download)
+	} else if mess.SearchReply != nil {
+		g.AcceptSearchReply(*mess.SearchReply)
+	} else if mess.SearchRequest != nil {
+		g.AcceptSearchRequest(*mess.SearchRequest, isFromClient)
 	} else {
-		fmt.Println("Gossip message received but unknown")
+		log.Println("Gossip message received but unknown")
 	}
+}
+
+func (g *Gossiper) AcceptSearchReply(mess Messages.SearchReply) {
+	if len(mess.Results) <= 0 {
+		log.Println("Search reply with no result received")
+		return
+	}
+
+	g.PendingRequests.Mutex.Lock()
+	for iFile := range mess.Results {
+
+		fmt.Println("FOUND match", mess.Results[iFile].FileName, "at", mess.Origin, "budget=2")
+		fmt.Printf("Metafile=%x chunks=%v\n", mess.Results[iFile].MetafileHash, mess.Results[iFile].ChunkMap)
+
+		g.currentDownloads.Mutex.Lock()
+		metaData, hasMetaFile := g.currentDownloads.Files[hashToString(mess.Results[iFile].MetafileHash)]
+		g.currentDownloads.Mutex.Unlock()
+
+		hash := hashToString(mess.Results[iFile].MetafileHash)
+		if request, ok := g.PendingRequests.requests[hash]; ok {
+			g.PendingRequests.requests[hash].chunkMap = mess.Results[iFile].ChunkMap
+			if request.nbChunk == 0 && !hasMetaFile {
+				g.askMetaFile(mess.Origin, mess.Results[iFile].FileName, mess.Results[iFile].MetafileHash)
+			} else if request.nbChunk == 0 && hasMetaFile {
+				request.nbChunk = uint64(metaData.size / 8000)
+			} else if request.isClosed() {
+				g.PendingRequests.nbMatch += 1
+				if g.PendingRequests.nbMatch == 2 {
+					fmt.Println("SEARCH FINISHED")
+					g.searchState = false
+				}
+			}
+		} else {
+			g.PendingRequests.requests[hash] = &Request{mess.Results[iFile].FileName, mess.Results[iFile].ChunkMap, 0}
+			g.askMetaFile(mess.Origin, mess.Results[iFile].FileName, mess.Results[iFile].MetafileHash)
+		}
+	}
+	g.PendingRequests.Mutex.Unlock()
+}
+
+func (g Gossiper) askMetaFile(dest, filename string, hash []byte) {
+	metafile, err := os.Create(g.workingPath + filename + "_meta")
+	if err != nil {
+		log.Println("askMetaFile:", err)
+		return
+	}
+	metafile.Close()
+
+	rq := &Messages.DataRequest{g.name, dest, 10, filename, hash}
+	g.forward(rq)
+}
+
+func (g *Gossiper) AcceptSearchRequest(mess Messages.SearchRequest, isFromClient bool) {
+	files := make(map[string]MetaData)
+	downloadState := make(map[string]*state)
+
+	g.FileShared.Mutex.Lock()
+	for k, v := range g.FileShared.Files {
+		files[k] = v
+	}
+	g.FileShared.Mutex.Unlock()
+
+	g.downloadState.Mutex.Lock()
+	for k, v := range g.downloadState.states {
+		downloadState[k] = v
+	}
+	g.downloadState.Mutex.Unlock()
+
+	searchResults := searchFile(mess.Keywords, files, downloadState)
+
+	if isFromClient {
+		if g.searchState == true {
+			log.Println("A research is already running")
+			return
+		}
+		g.searchState = true
+		if mess.Budget == 1 {
+			mess.Budget = 3
+		}
+		mess.Origin = g.name
+	}
+
+	if len(searchResults) != 0 {
+		g.sendSearchReply(searchResults, mess.Origin)
+	} else if mess.Budget > 1 && isFromClient {
+		tick := time.NewTicker(time.Second)
+		for g.searchState {
+			<-tick.C
+			mess.Budget *= 2
+			g.propagateSearchFile(mess)
+		}
+	} else if mess.Budget > 1 {
+		g.propagateSearchFile(mess)
+	} else {
+		fmt.Println("Search Request DELETED")
+	}
+}
+
+func (g *Gossiper) propagateSearchFile(mess Messages.SearchRequest) {
+	fmt.Println("Propagate search file")
+	nbPeers := uint64(g.peers.len())
+
+	// The budgets send to peers depend on mess.Budget.
+	var newBudget uint64 = 1
+	var remain uint64 = 0
+	if mess.Budget-1 > nbPeers {
+		newBudget = (mess.Budget - 1) / nbPeers
+		remain = (mess.Budget - 1) % nbPeers
+	}
+	newRequest := Messages.SearchRequest{mess.Origin, newBudget, mess.Keywords}
+
+	var iPeer uint64 = 0
+	g.peers.Mutex.Lock()
+	for _, peer := range g.peers.Peers {
+		iPeer += 1
+		if iPeer < remain {
+			newRequest.Budget += 1
+		}
+		newRequest.Send(g.gossipConn, peer.addr)
+	}
+	g.peers.Mutex.Unlock()
+}
+
+func (g *Gossiper) sendSearchReply(searchResult []*Messages.SearchResult, dest string) {
+	searchReply := Messages.SearchReply{g.name, dest, 10, searchResult}
+	g.forward(&searchReply)
 }
 
 func (g *Gossiper) AcceptDownload(mess Messages.DownloadFile) {
@@ -254,55 +388,78 @@ func (g *Gossiper) AcceptDataRequest(mess Messages.DataRequest) {
 func (g *Gossiper) receiveFileData(hash, data []byte, origin string) {
 	strHash := hashToString(hash)
 	g.currentDownloads.Mutex.Lock()
-	metaData, ok := g.currentDownloads.Files[strHash]
+	metaData, download := g.currentDownloads.Files[strHash]
 	g.currentDownloads.Mutex.Unlock()
 
-	fileName := getNameFile(metaData.path)
+	g.PendingRequests.Mutex.Lock()
+	request, searching := g.PendingRequests.requests[hashToString(hash)]
+	g.PendingRequests.Mutex.Unlock()
 
-	if ok {
-		file, err := os.OpenFile(metaData.path, os.O_RDWR, 0333)
-		if err != nil {
-			log.Println("receiveFileData:", err)
-			return
+	var fileName string
+
+	if download || searching {
+		var file *os.File
+		var err error
+		if download {
+			fileName = getNameFile(metaData.path)
+			file, err = os.OpenFile(metaData.path, os.O_RDWR, 0333)
+			if err != nil {
+				log.Println("receiveFileData:", err)
+				return
+			}
+		} else {
+			fileName = request.fileName
+			file, err = os.OpenFile(g.workingPath+fileName+"_meta", os.O_RDWR, 0333)
+			if err != nil {
+				log.Println("receiveFileData:", err)
+				return
+			}
 		}
 
-		if metaData.isMetaFile {
+		if metaData.isMetaFile || searching {
 			_, err = file.Write(data)
 			file.Close()
 
 			fmt.Println("METAFILE RECEIVED")
 
 			chunks := ListFiles{make(map[string]MetaData), &sync.RWMutex{}}
-			nbChunk, _ := analyseMetaFile(strHash, g.workingPath+metaData.Name, metaData.path, &chunks)
 
-			fmt.Println("Nb chunks to dl: ", nbChunk)
+			var nbChunk int
+			if download {
+				nbChunk, _ = analyseMetaFile(strHash, g.workingPath+metaData.Name, metaData.path, &chunks)
 
-			g.downloadState.Mutex.Lock()
-			g.downloadState.dl[strHash] = nbChunk
-			g.downloadState.min[strHash] = 8000
-			g.downloadState.Mutex.Unlock()
+				fmt.Println("Nb chunks: ", nbChunk)
+				g.downloadState.Mutex.Lock()
+				g.downloadState.states[strHash] = initState(nbChunk)
+				g.downloadState.Mutex.Unlock()
 
-			tempFile, _ := os.Create(g.workingPath + metaData.Name)
-			tempFile.Write(make([]byte, nbChunk*8000))
-			tempFile.Close()
+				tempFile, _ := os.Create(g.workingPath + metaData.Name)
+				tempFile.Write(make([]byte, nbChunk*8000))
+				tempFile.Close()
 
-			g.sendRequests(chunks.Files, origin)
+				g.sendRequests(chunks.Files, origin)
+			} else if searching {
+				nbChunk, _ := analyseMetaFile(strHash, "", g.workingPath+fileName+"_meta", &chunks)
+
+				fmt.Println("Nb chunks: ", nbChunk)
+				request.nbChunk = uint64(nbChunk)
+			}
 		} else {
 			nb, _ := file.WriteAt(data, metaData.offset)
 
-			fmt.Println("RECEIVED", fileName, "chunk", metaData.offset/8000)
+			chunkNumber := metaData.offset / 8000
+			fmt.Println("RECEIVED", fileName, "chunk", chunkNumber)
 
 			var remain int64
 
 			g.downloadState.Mutex.Lock()
-			g.downloadState.dl[metaData.Name] -= 1
-			isLastChunk := g.downloadState.dl[metaData.Name] <= 0
-			if nb < g.downloadState.min[metaData.Name] {
-				g.downloadState.min[metaData.Name] = nb
+			isLastChunk := g.downloadState.chunkReceived(metaData.Name, int(chunkNumber))
+			if nb < g.downloadState.states[metaData.Name].min {
+				g.downloadState.states[metaData.Name].min = nb
 			}
 			if isLastChunk {
-				delete(g.downloadState.dl, metaData.Name)
-				remain = 8000 - int64(g.downloadState.min[metaData.Name])
+				remain = 8000 - int64(g.downloadState.states[metaData.Name].min)
+				delete(g.downloadState.states, metaData.Name)
 			}
 			g.downloadState.Mutex.Unlock()
 
@@ -338,7 +495,7 @@ func (g *Gossiper) receiveFileData(hash, data []byte, origin string) {
 
 func (g *Gossiper) sendRequests(chunks map[string]MetaData, dest string) {
 	var request Messages.DataRequest
-	tick := time.NewTicker(time.Duration(100)*time.Microsecond)
+	tick := time.NewTicker(time.Duration(100) * time.Microsecond)
 	for chunkHash, chunkMeta := range chunks {
 		chunkHashByte, _ := hex.DecodeString(chunkHash)
 		request = Messages.DataRequest{g.name, dest, 10, chunkMeta.Name, chunkHashByte}
@@ -354,20 +511,21 @@ func (g *Gossiper) sendRequests(chunks map[string]MetaData, dest string) {
 
 // Scan and store metadata when a file is shared
 func (g *Gossiper) AcceptShareFile(mess Messages.ShareFile) {
-	metaHash, err := scanFile(g.workingPath + mess.Path)
+	path := g.workingPath + mess.Path
+	fileSize, metaHash, err := scanFile(path)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	metaData := MetaData{mess.Path, 0, g.workingPath + mess.Path + "_meta", true, 0}
+	metaData := MetaData{mess.Path, fileSize, g.workingPath + mess.Path + "_meta", true, 0}
 
 	g.FileShared.Mutex.Lock()
 	g.FileShared.Files[hashToString(metaHash)] = metaData
 	g.FileShared.Mutex.Unlock()
 
 	analyseMetaFile(mess.Path, g.workingPath+mess.Path, metaData.path, &g.FileShared)
-	fmt.Println("FILE", mess.Path, "of", 0, "Bytes", "is now shared: ", hashToString(metaHash))
+	fmt.Println("FILE", mess.Path, "of", fileSize, "Bytes", "is now shared: ", hashToString(metaHash))
 }
 
 func (g *Gossiper) AcceptPrivateMessage(mess Messages.PrivateMessage, addr net.UDPAddr, isFromClient bool) {

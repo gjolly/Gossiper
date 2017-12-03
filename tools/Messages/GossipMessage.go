@@ -14,6 +14,8 @@ type GossipMessage struct {
 	DataReply      *DataReply
 	PrivateMessage *PrivateMessage
 	Download       *DownloadFile
+	SearchReply    *SearchReply
+	SearchRequest  *SearchRequest
 }
 
 func (g GossipMessage) String() string {

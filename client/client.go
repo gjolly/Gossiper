@@ -8,6 +8,7 @@ import (
 	"github.com/gjolly/Gossiper/tools/Messages"
 	"encoding/hex"
 	"log"
+	"strings"
 )
 
 func main() {
@@ -16,6 +17,8 @@ func main() {
 	dest := flag.String("Dest", "", "Specify a destination for a private message")
 	file := flag.String("file", "", "File to share")
 	hash := flag.String("request", "", "File to download")
+	keywords := flag.String("keywords", "", "Keywords to search")
+	budget := flag.Uint64("budget", 0, "Budget for search request")
 	flag.Parse()
 
 	udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:" + *port)
@@ -30,8 +33,8 @@ func main() {
 	}
 	defer conn.Close()
 
-	var mess Messages.GossipMessage
-	if *file == "" && *dest == "" {
+	var mess Messages.Message
+	if *file == "" && *dest == "" && *keywords == "" {
 		rmess := Messages.RumorMessage{Text: *msg}
 		mess = Messages.GossipMessage{Rumor: &rmess}
 	} else if *dest != "" && *file == "" {
@@ -46,6 +49,9 @@ func main() {
 			return
 		}
 		mess = Messages.GossipMessage{Download: &Messages.DownloadFile{*file, byteHash, *dest}}
+	} else if *keywords != "" {
+		listKeywords := strings.Split(*keywords, ",")
+		mess = Messages.SearchRequest{"", *budget+1, listKeywords}
 	}
 
 	mess.Send(conn, *udpAddr)
